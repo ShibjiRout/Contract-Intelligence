@@ -60,3 +60,21 @@ export interface ProgressEvent {
   percent: number
   message: string
 }
+
+export interface PlaybookRule {
+  id: number
+  clause_type: string
+  jurisdiction: string
+  rule_type: 'REQUIRED' | 'FORBIDDEN' | 'CONDITIONAL'
+  description: string
+  weight: number
+  is_active: boolean
+}
+
+export interface PlaybookRuleCreate {
+  clause_type: string
+  jurisdiction: string
+  rule_type: 'REQUIRED' | 'FORBIDDEN' | 'CONDITIONAL'
+  description: string
+  weight: number
+}
