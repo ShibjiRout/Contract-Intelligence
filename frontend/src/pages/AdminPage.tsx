@@ -41,13 +41,14 @@ export default function AdminPage() {
   const [toast, setToast] = useState<string | null>(null)
 
   const [jurisdictionFilter, setJurisdictionFilter] = useState<string>('')
+  const [pdfUploading, setPdfUploading] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<PlaybookRuleCreate>(emptyForm())
   const [formError, setFormError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   if (!hasRole('admin')) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/dashboard" replace />
   }
 
   const showToast = (msg: string) => {
@@ -90,6 +91,22 @@ export default function AdminPage() {
       ...prev,
       [name]: name === 'weight' ? parseFloat(value) : value,
     }))
+  }
+
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setPdfUploading(true)
+    try {
+      const res = await adminApi.uploadPdf(file)
+      showToast(`${res.data.rules_created} rule${res.data.rules_created !== 1 ? 's' : ''} extracted from PDF.`)
+      loadRules(jurisdictionFilter)
+    } catch {
+      setError('Failed to extract rules from PDF. Please try again.')
+    } finally {
+      setPdfUploading(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -155,15 +172,32 @@ export default function AdminPage() {
                   Manage jurisdiction-specific clause requirements
                 </p>
               </div>
-              <button
-                onClick={() => { setShowForm(true); setFormError(null) }}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Add Rule
-              </button>
+              <div className="flex items-center gap-2">
+                <label
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 border border-indigo-300 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer ${pdfUploading ? 'opacity-50 pointer-events-none' : ''}`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  {pdfUploading ? 'Uploading…' : 'Upload PDF'}
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    className="hidden"
+                    onChange={handlePdfUpload}
+                    disabled={pdfUploading}
+                  />
+                </label>
+                <button
+                  onClick={() => { setShowForm(true); setFormError(null) }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Rule
+                </button>
+              </div>
             </div>
 
             {/* Add Rule Form */}

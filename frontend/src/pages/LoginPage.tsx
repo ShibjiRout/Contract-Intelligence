@@ -20,7 +20,7 @@ export default function LoginPage() {
     try {
       await authApi.login(email, password)
       await dispatch(fetchMe()).unwrap()
-      navigate('/')
+      navigate('/dashboard')
     } catch {
       setError('Invalid email or password. Please try again.')
     } finally {

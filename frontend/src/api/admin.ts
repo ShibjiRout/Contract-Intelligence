@@ -11,4 +11,12 @@ export const adminApi = {
   updateRule: (id: number, data: Partial<PlaybookRuleCreate & { is_active: boolean }>) =>
     client.patch<PlaybookRule>(`/admin/playbook-rules/${id}`, data).then((r) => r.data),
   deleteRule: (id: number) => client.delete(`/admin/playbook-rules/${id}`),
+  uploadPdf: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return client.post<{ rules_created: number; rules: PlaybookRule[] }>(
+      '/admin/playbook-rules/upload-pdf',
+      form
+    )
+  },
 }

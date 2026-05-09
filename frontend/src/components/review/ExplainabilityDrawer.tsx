@@ -19,7 +19,7 @@ export default function ExplainabilityDrawer({ clauseId }: Props) {
 
   const { data, isLoading } = useQuery({
     queryKey: ['explanation', clauseId],
-    queryFn: () => clausesApi.getExplanation(clauseId).then((r) => r.data),
+    queryFn: () => clausesApi.getRecommendation(clauseId).then((r) => r.data),
     enabled: open,
   })
 
