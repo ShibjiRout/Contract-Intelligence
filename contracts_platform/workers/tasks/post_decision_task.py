@@ -36,8 +36,8 @@ def post_decision_task(
         )
 
         # Stub calls — db agents will implement
-        from db.qdrant.clause_vector_repo import upsert_clause  # type: ignore[import]
-        from db.neo4j.clause_graph_repo import add_review_decision  # type: ignore[import]
+        from contracts_platform.db.qdrant.repositories.clause_vector_repo import upsert_clause  # type: ignore[import]
+        from contracts_platform.db.neo4j.repositories.clause_graph_repo import add_review_decision  # type: ignore[import]
 
         asyncio.run(upsert_clause(clause_id=clause_id, decision=decision, modified_text=modified_text))  # type: ignore[arg-type]
         asyncio.run(add_review_decision(clause_id, decision))  # type: ignore[arg-type]

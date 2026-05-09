@@ -30,7 +30,7 @@ def review_orchestration_task(self, contract_id: str) -> None:
         )
 
         # Stub call — langgraph agent will implement
-        from orchestration.graph import run_review_graph  # type: ignore[import]
+        from contracts_platform.orchestration.graph import run_review_graph  # type: ignore[import]
 
         asyncio.run(run_review_graph(contract_id))  # type: ignore[arg-type]
 

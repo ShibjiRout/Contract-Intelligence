@@ -36,7 +36,7 @@ def ocr_task(self, contract_id: str, file_bytes_b64: str, filename: str) -> None
         file_bytes = base64.b64decode(file_bytes_b64)
 
         # Stub call — pipeline agent will implement
-        from pipeline.ocr.extractor import extract_text  # type: ignore[import]
+        from contracts_platform.pipeline.ocr.extractor import extract_text  # type: ignore[import]
 
         extracted_text: str = asyncio.run(extract_text(file_bytes, filename))  # type: ignore[arg-type]
 
