@@ -32,7 +32,7 @@ export default function DropZone() {
     setError(null)
     setUploading(true)
     try {
-      const res = await contractsApi.upload(file, jurisdiction)
+      const res = await contractsApi.upload(file)
       navigate(`/review/${res.data.contract_id}`)
     } catch {
       setError('Upload failed. Please try again.')

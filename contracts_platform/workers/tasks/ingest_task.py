@@ -7,10 +7,7 @@ from contracts_platform.core.constants import ContractStatus
 from contracts_platform.core.logging import logger
 from contracts_platform.db.mongodb.client import get_database
 from contracts_platform.db.mongodb.repositories import contract_repo
-from contracts_platform.file_handling.duplicate_detector import (
-    check_duplicate,
-    compute_file_hash,
-)
+from contracts_platform.file_handling.duplicate_detector import check_duplicate
 from contracts_platform.workers.celery_app import app
 from contracts_platform.workers.dead_letter import dead_letter_handler
 from contracts_platform.workers.progress_tracker import publish
@@ -39,58 +36,56 @@ def ingest_task(
     tenant_id: str,
 ) -> None:
     """Validate, deduplicate, and hand off to OCR."""
-    try:
-        publish(contract_id, "ingest", 0, "ingestion started")
 
-        file_bytes = base64.b64decode(file_bytes_b64)
+    async def _run() -> None:
+        db = await get_database()
+        try:
+            publish(contract_id, "ingest", 0, "ingestion started")
 
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.update_status(db, contract_id, ContractStatus.PROCESSING, stage="ingestion")
-        )
+            file_bytes = base64.b64decode(file_bytes_b64)
 
-        # Validate MIME type
-        mime = magic.from_buffer(file_bytes, mime=True)
-        if mime not in _ALLOWED_MIMES:
-            raise ValueError(f"Unsupported file type: {mime}")
+            await contract_repo.update_status(
+                db, contract_id, ContractStatus.PROCESSING, stage="ingestion"
+            )
 
-        # Validate size
-        if len(file_bytes) > _MAX_SIZE_BYTES:
-            raise ValueError(f"File size {len(file_bytes)} exceeds 50 MB limit")
-        is_duplicate, existing_id = asyncio.run(check_duplicate(db, file_bytes))
+            mime = magic.from_buffer(file_bytes, mime=True)
+            if mime not in _ALLOWED_MIMES:
+                raise ValueError(f"Unsupported file type: {mime}")
 
-        if is_duplicate:
-            publish(contract_id, "ingest", 100, "duplicate detected")
-            asyncio.run(
-                contract_repo.update_status(
-                    db,
-                    contract_id,
-                    ContractStatus.REVIEW_READY,
-                    stage="ingestion",
+            if len(file_bytes) > _MAX_SIZE_BYTES:
+                raise ValueError(f"File size {len(file_bytes)} exceeds 50 MB limit")
+
+            is_duplicate, existing_id = await check_duplicate(db, file_bytes, exclude_contract_id=contract_id)
+
+            if is_duplicate:
+                publish(contract_id, "ingest", 100, "duplicate detected")
+                await contract_repo.update_status(
+                    db, contract_id, ContractStatus.REVIEW_READY, stage="ingestion"
                 )
+                logger.info(
+                    "ingest_task.duplicate",
+                    contract_id=contract_id,
+                    existing_id=existing_id,
+                )
+                return
+
+            publish(contract_id, "ingest", 25, "validation passed")
+
+            from contracts_platform.workers.tasks.ocr_task import ocr_task
+
+            ocr_task.apply_async(
+                args=[contract_id, file_bytes_b64, filename],
+                queue="ocr",
             )
-            logger.info(
-                "ingest_task.duplicate",
-                contract_id=contract_id,
-                existing_id=existing_id,
-            )
-            return
 
-        publish(contract_id, "ingest", 25, "validation passed")
+        except Exception as exc:
+            await contract_repo.append_error(db, contract_id, stage="ingest", message=str(exc))
+            logger.error("ingest_task.error", contract_id=contract_id, error=str(exc))
+            raise
 
-        from contracts_platform.workers.tasks.ocr_task import ocr_task  # avoid circular at module level
-
-        ocr_task.apply_async(
-            args=[contract_id, file_bytes_b64, filename],
-            queue="ocr",
-        )
-
+    try:
+        asyncio.run(_run())
     except Exception as exc:
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.append_error(db, contract_id, stage="ingest", message=str(exc))
-        )
-        logger.error("ingest_task.error", contract_id=contract_id, error=str(exc))
         try:
             raise self.retry(exc=exc, countdown=RETRY_POLICY["ingest_task"]["countdown"])
         except self.MaxRetriesExceededError:

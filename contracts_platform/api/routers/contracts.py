@@ -70,7 +70,7 @@ async def upload_contract(
 
     # Dispatch ingest task
     try:
-        from contracts_platform.workers.tasks import ingest_task  # type: ignore
+        from contracts_platform.workers.tasks.ingest_task import ingest_task
 
         b64 = base64.b64encode(file_bytes).decode()
         ingest_task.apply_async(

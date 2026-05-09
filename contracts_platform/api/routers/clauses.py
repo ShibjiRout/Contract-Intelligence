@@ -20,7 +20,7 @@ async def _get_clause_or_404(db, clause_id: str) -> dict:
 
 def _dispatch_post_decision(contract_id: str, clause_id: str, decision: str, **kwargs):
     try:
-        from contracts_platform.workers.tasks import post_decision_task  # type: ignore
+        from contracts_platform.workers.tasks.post_decision_task import post_decision_task
 
         post_decision_task.apply_async(
             args=[contract_id, clause_id, decision],

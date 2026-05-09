@@ -31,29 +31,27 @@ def post_decision_task(
     reviewer_id: str = "unknown",
 ) -> None:
     """Persist the lawyer's review decision into Qdrant and Neo4j, then trigger cleanup."""
-    try:
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.update_status(
+
+    async def _run() -> None:
+        db = await get_database()
+        try:
+            await contract_repo.update_status(
                 db, contract_id, ContractStatus.PROCESSING, stage="post_decision"
             )
-        )
 
-        # Stub calls — db agents will implement
-        from contracts_platform.db.qdrant.repositories.clause_vector_repo import upsert_clause  # type: ignore[import]
-        from contracts_platform.db.neo4j.repositories.clause_graph_repo import add_review_decision  # type: ignore[import]
+            from contracts_platform.db.qdrant.repositories.clause_vector_repo import upsert_clause
+            from contracts_platform.db.neo4j.repositories.clause_graph_repo import add_review_decision
 
-        clause = asyncio.run(db["clauses"].find_one({"clause_id": clause_id}))
+            clause = await db["clauses"].find_one({"clause_id": clause_id})
 
-        async def _embed(text: str) -> list[float]:
             client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-            response = await client.embeddings.create(model=settings.EMBEDDING_MODEL, input=text)
-            return response.data[0].embedding
+            response = await client.embeddings.create(
+                model=settings.EMBEDDING_MODEL,
+                input=clause.get("clause_text", "") if clause else "",
+            )
+            vector = response.data[0].embedding
 
-        vector = asyncio.run(_embed(clause.get("clause_text", "") if clause else ""))
-
-        asyncio.run(
-            upsert_clause(
+            await upsert_clause(
                 tenant_id=clause["tenant_id"] if clause else "unknown",
                 clause_id=clause_id,
                 vector=vector,
@@ -63,34 +61,33 @@ def post_decision_task(
                     "modified_text": modified_text,
                 },
             )
-        )  # type: ignore[arg-type]
 
-        parties = clause.get("parties_mentioned", []) if clause else []
-        party_id = parties[0] if parties else "unknown"
-        asyncio.run(
-            add_review_decision(
+            parties = clause.get("parties_mentioned", []) if clause else []
+            party_id = parties[0] if parties else "unknown"
+            await add_review_decision(
                 party_id=party_id,
                 contract_id=contract_id,
                 reviewer_id=reviewer_id,
                 outcome=decision,
             )
-        )  # type: ignore[arg-type]
 
-        publish(contract_id, "post_decision", 100, "decision recorded")
+            publish(contract_id, "post_decision", 100, "decision recorded")
 
-        if decision in _FINAL_DECISIONS:
-            from contracts_platform.workers.tasks.cleanup_task import cleanup_task
+            if decision in _FINAL_DECISIONS:
+                from contracts_platform.workers.tasks.cleanup_task import cleanup_task
 
-            cleanup_task.apply_async(args=[contract_id], queue="cleanup")
+                cleanup_task.apply_async(args=[contract_id], queue="cleanup")
 
-    except Exception as exc:
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.append_error(
+        except Exception as exc:
+            await contract_repo.append_error(
                 db, contract_id, stage="post_decision", message=str(exc)
             )
-        )
-        logger.error("post_decision_task.error", contract_id=contract_id, error=str(exc))
+            logger.error("post_decision_task.error", contract_id=contract_id, error=str(exc))
+            raise
+
+    try:
+        asyncio.run(_run())
+    except Exception as exc:
         try:
             raise self.retry(exc=exc, countdown=RETRY_POLICY["post_decision_task"]["countdown"])
         except self.MaxRetriesExceededError:

@@ -19,35 +19,36 @@ from contracts_platform.workers.retry_policy import RETRY_POLICY
 )
 def review_orchestration_task(self, contract_id: str) -> None:
     """Run the LangGraph review orchestration (playbook + vector + graph checks)."""
-    try:
-        publish(contract_id, "review_orchestration", 78, "orchestration started")
 
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.update_status(
+    async def _run() -> None:
+        db = await get_database()
+        try:
+            publish(contract_id, "review_orchestration", 78, "orchestration started")
+
+            await contract_repo.update_status(
                 db, contract_id, ContractStatus.PROCESSING, stage="review_orchestration"
             )
-        )
 
-        # Stub call — langgraph agent will implement
-        from contracts_platform.orchestration.graph import run_review_graph  # type: ignore[import]
+            from contracts_platform.orchestration.graph import run_review_graph
 
-        asyncio.run(run_review_graph(contract_id))  # type: ignore[arg-type]
+            await run_review_graph(contract_id)
 
-        publish(contract_id, "review_orchestration", 90, "orchestration complete")
+            publish(contract_id, "review_orchestration", 90, "orchestration complete")
 
-        from contracts_platform.workers.tasks.recommendation_task import recommendation_task
+            from contracts_platform.workers.tasks.recommendation_task import recommendation_task
 
-        recommendation_task.apply_async(args=[contract_id], queue="recommendation")
+            recommendation_task.apply_async(args=[contract_id], queue="recommendation")
 
-    except Exception as exc:
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.append_error(
+        except Exception as exc:
+            await contract_repo.append_error(
                 db, contract_id, stage="review_orchestration", message=str(exc)
             )
-        )
-        logger.error("review_orchestration_task.error", contract_id=contract_id, error=str(exc))
+            logger.error("review_orchestration_task.error", contract_id=contract_id, error=str(exc))
+            raise
+
+    try:
+        asyncio.run(_run())
+    except Exception as exc:
         try:
             raise self.retry(
                 exc=exc, countdown=RETRY_POLICY["review_orchestration_task"]["countdown"]

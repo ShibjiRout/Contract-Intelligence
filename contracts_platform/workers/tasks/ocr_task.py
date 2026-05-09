@@ -25,40 +25,43 @@ _OCR_TEXT_TTL = 3600  # 1 hour
 )
 def ocr_task(self, contract_id: str, file_bytes_b64: str, filename: str) -> None:
     """Run OCR on the uploaded file and cache the extracted text in Redis."""
+
+    async def _run() -> None:
+        db = await get_database()
+        try:
+            publish(contract_id, "ocr", 10, "OCR started")
+
+            await contract_repo.update_status(
+                db, contract_id, ContractStatus.PROCESSING, stage="ocr"
+            )
+
+            file_bytes = base64.b64decode(file_bytes_b64)
+
+            from contracts_platform.pipeline.ocr.extractor import extract_text
+
+            extracted_text: str = await extract_text(file_bytes, filename)
+
+            r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            r.setex(f"ocr_text:{contract_id}", _OCR_TEXT_TTL, extracted_text)
+
+            from contracts_platform.file_handling.temp_storage import save_temp_text
+
+            await save_temp_text(contract_id, extracted_text)
+
+            publish(contract_id, "ocr", 50, "OCR complete")
+
+            from contracts_platform.workers.tasks.clause_extraction_task import clause_extraction_task
+
+            clause_extraction_task.apply_async(args=[contract_id], queue="extraction")
+
+        except Exception as exc:
+            await contract_repo.append_error(db, contract_id, stage="ocr", message=str(exc))
+            logger.error("ocr_task.error", contract_id=contract_id, error=str(exc))
+            raise
+
     try:
-        publish(contract_id, "ocr", 10, "OCR started")
-
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.update_status(db, contract_id, ContractStatus.PROCESSING, stage="ocr")
-        )
-
-        file_bytes = base64.b64decode(file_bytes_b64)
-
-        # Stub call — pipeline agent will implement
-        from contracts_platform.pipeline.ocr.extractor import extract_text  # type: ignore[import]
-
-        extracted_text: str = asyncio.run(extract_text(file_bytes, filename))  # type: ignore[arg-type]
-
-        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        r.setex(f"ocr_text:{contract_id}", _OCR_TEXT_TTL, extracted_text)
-
-        from contracts_platform.file_handling.temp_storage import temp_storage  # type: ignore[import]
-
-        asyncio.run(temp_storage.save_temp_text(contract_id, extracted_text))
-
-        publish(contract_id, "ocr", 50, "OCR complete")
-
-        from contracts_platform.workers.tasks.clause_extraction_task import clause_extraction_task
-
-        clause_extraction_task.apply_async(args=[contract_id], queue="extraction")
-
+        asyncio.run(_run())
     except Exception as exc:
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.append_error(db, contract_id, stage="ocr", message=str(exc))
-        )
-        logger.error("ocr_task.error", contract_id=contract_id, error=str(exc))
         try:
             raise self.retry(exc=exc, countdown=RETRY_POLICY["ocr_task"]["countdown"])
         except self.MaxRetriesExceededError:

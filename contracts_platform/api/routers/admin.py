@@ -4,7 +4,7 @@ from typing import Optional
 
 import openai
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from contracts_platform.api.schemas.admin import (
 from contracts_platform.auth.rbac import require_role
 from contracts_platform.core.config import settings
 from contracts_platform.db.neo4j.repositories.clause_graph_repo import create_playbook_rule_node
-from contracts_platform.db.postgresql.client import get_session
+from contracts_platform.db.postgresql.client import AsyncSessionLocal, get_session
 from contracts_platform.db.postgresql.models import PlaybookRule
 from contracts_platform.db.postgresql.repositories import rule_repo
 from contracts_platform.db.qdrant.repositories import clause_vector_repo
@@ -203,16 +203,21 @@ async def delete_playbook_rule(
     "/playbook-rules/upload-pdf",
     response_model=PlaybookRulePDFUploadResponse,
     status_code=201,
+    include_in_schema=True,
 )
 async def upload_playbook_pdf(
-    file: UploadFile,
-    session: AsyncSession = Depends(get_session),
+    file: UploadFile = File(...),
     current_user: dict = Depends(require_role("admin")),
 ) -> PlaybookRulePDFUploadResponse:
     """
     Upload a company policy PDF, extract playbook rules via OCR + LLM, and persist each rule
     to PostgreSQL, Qdrant, and Neo4j.
     """
+    async with AsyncSessionLocal() as session:
+        return await _do_upload_playbook_pdf(file, session, current_user)
+
+
+async def _do_upload_playbook_pdf(file: UploadFile, session: AsyncSession, current_user: dict) -> PlaybookRulePDFUploadResponse:
     if file.content_type != "application/pdf":
         raise HTTPException(
             status_code=415,

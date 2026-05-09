@@ -42,7 +42,7 @@ export default function ContractTable({ contracts }: Props) {
             <th className="text-left px-4 py-3 font-medium text-gray-600">File Name</th>
             <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
             <th className="text-left px-4 py-3 font-medium text-gray-600">Risk</th>
-            <th className="text-left px-4 py-3 font-medium text-gray-600">Jurisdiction</th>
+            <th className="text-left px-4 py-3 font-medium text-gray-600">Stage</th>
             <th className="text-left px-4 py-3 font-medium text-gray-600">Created</th>
           </tr>
         </thead>
@@ -54,15 +54,15 @@ export default function ContractTable({ contracts }: Props) {
               className="cursor-pointer hover:bg-gray-50 transition-colors"
             >
               <td className="px-4 py-3 font-medium text-gray-900 max-w-xs truncate">
-                {contract.file_name}
+                {contract.filename}
               </td>
               <td className="px-4 py-3 text-gray-600">
                 {STATUS_LABELS[contract.status]}
               </td>
               <td className="px-4 py-3">
-                <RiskBadge level={contract.final_risk} />
+                <RiskBadge level={contract.final_risk ?? 'UNKNOWN'} />
               </td>
-              <td className="px-4 py-3 text-gray-600">{contract.jurisdiction}</td>
+              <td className="px-4 py-3 text-gray-600">{contract.current_stage ?? '—'}</td>
               <td className="px-4 py-3 text-gray-500">
                 {new Date(contract.created_at).toLocaleDateString()}
               </td>

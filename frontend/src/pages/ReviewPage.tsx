@@ -28,7 +28,7 @@ export default function ReviewPage() {
     enabled: !!contractId,
   })
 
-  const pdfUrl = `${import.meta.env.VITE_API_URL}/api/contracts/${contractId}/file`
+  const pdfUrl = `${import.meta.env.VITE_API_URL}/contracts/${contractId}/file`
   const firstClauseId = clauses[0]?.clause_id ?? null
 
   return (
@@ -42,14 +42,14 @@ export default function ReviewPage() {
             <div className="flex items-center gap-3">
               <div>
                 <h1 className="text-base font-semibold text-gray-900 truncate max-w-md">
-                  {contract?.file_name ?? 'Loading…'}
+                  {contract?.filename ?? 'Loading…'}
                 </h1>
                 {contract && (
                   <div className="flex items-center gap-2 mt-0.5">
-                    <RiskBadge level={contract.final_risk} />
-                    <span className="text-xs text-gray-500">{contract.jurisdiction}</span>
+                    <RiskBadge level={contract.final_risk ?? 'UNKNOWN'} />
+                    <span className="text-xs text-gray-500">{contract.current_stage ?? 'Processing'}</span>
                     <span className="text-xs text-gray-400">·</span>
-                    <span className="text-xs text-gray-500">{contract.clause_count} clauses</span>
+                    <span className="text-xs text-gray-500">{clauses.length} clauses</span>
                   </div>
                 )}
               </div>
@@ -60,7 +60,7 @@ export default function ReviewPage() {
                 <ExplainabilityDrawer clauseId={selectedClauseId ?? firstClauseId} />
               )}
               <ExportMenu
-                contractFileName={contract?.file_name ?? 'contract'}
+                contractFileName={contract?.filename ?? 'contract'}
                 clauses={clauses}
               />
             </div>

@@ -12,12 +12,10 @@ export interface User {
 
 export interface Contract {
   contract_id: string
-  file_name: string
+  filename: string
   status: ContractStatus
-  final_risk: RiskLevel
-  jurisdiction: string
-  clause_count: number
-  missing_clauses: string[]
+  current_stage: string | null
+  final_risk: RiskLevel | null
   created_at: string
   updated_at: string
 }

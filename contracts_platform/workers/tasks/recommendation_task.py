@@ -19,38 +19,36 @@ from contracts_platform.workers.retry_policy import RETRY_POLICY
 )
 def recommendation_task(self, contract_id: str) -> None:
     """Generate LLM-powered recommendations and mark the contract ready for lawyer review."""
-    try:
-        publish(contract_id, "recommendation", 92, "generating recommendations")
 
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.update_status(
+    async def _run() -> None:
+        db = await get_database()
+        try:
+            publish(contract_id, "recommendation", 92, "generating recommendations")
+
+            await contract_repo.update_status(
                 db, contract_id, ContractStatus.PROCESSING, stage="recommendation"
             )
-        )
 
-        # Stub call — pipeline agent will implement
-        from contracts_platform.pipeline.recommendation.fix_suggester import generate_fixes  # type: ignore[import]
+            from contracts_platform.pipeline.recommendation.fix_suggester import generate_fixes
 
-        asyncio.run(generate_fixes(contract_id))  # type: ignore[arg-type]
+            await generate_fixes(contract_id)
 
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.update_status(
+            await contract_repo.update_status(
                 db, contract_id, ContractStatus.REVIEW_READY, stage="recommendation"
             )
-        )
 
-        publish(contract_id, "recommendation", 100, "ready for review")
+            publish(contract_id, "recommendation", 100, "ready for review")
 
-    except Exception as exc:
-        db = asyncio.run(get_database())
-        asyncio.run(
-            contract_repo.append_error(
+        except Exception as exc:
+            await contract_repo.append_error(
                 db, contract_id, stage="recommendation", message=str(exc)
             )
-        )
-        logger.error("recommendation_task.error", contract_id=contract_id, error=str(exc))
+            logger.error("recommendation_task.error", contract_id=contract_id, error=str(exc))
+            raise
+
+    try:
+        asyncio.run(_run())
+    except Exception as exc:
         try:
             raise self.retry(exc=exc, countdown=RETRY_POLICY["recommendation_task"]["countdown"])
         except self.MaxRetriesExceededError:

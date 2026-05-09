@@ -1,3 +1,5 @@
+import sys
+
 from celery import Celery
 
 from contracts_platform.core.config import settings
@@ -15,6 +17,8 @@ app.conf.update(
     accept_content=["json"],
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # Windows does not support prefork — use solo pool to avoid PermissionError
+    worker_pool="solo" if sys.platform == "win32" else "prefork",
 )
 
 app.autodiscover_tasks(
