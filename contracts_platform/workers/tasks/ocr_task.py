@@ -43,6 +43,10 @@ def ocr_task(self, contract_id: str, file_bytes_b64: str, filename: str) -> None
         r = redis.from_url(settings.REDIS_URL, decode_responses=True)
         r.setex(f"ocr_text:{contract_id}", _OCR_TEXT_TTL, extracted_text)
 
+        from contracts_platform.file_handling.temp_storage import temp_storage  # type: ignore[import]
+
+        asyncio.run(temp_storage.save_temp_text(contract_id, extracted_text))
+
         publish(contract_id, "ocr", 50, "OCR complete")
 
         from contracts_platform.workers.tasks.clause_extraction_task import clause_extraction_task

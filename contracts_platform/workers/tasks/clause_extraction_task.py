@@ -38,7 +38,9 @@ def clause_extraction_task(self, contract_id: str) -> None:
         # Stub call — pipeline agent will implement
         from contracts_platform.pipeline.clause_extraction.extractor import extract_clauses  # type: ignore[import]
 
-        asyncio.run(extract_clauses(contract_id, text))  # type: ignore[arg-type]
+        clauses = asyncio.run(extract_clauses(contract_id, text))  # type: ignore[arg-type]
+        if clauses:
+            asyncio.run(db["clauses"].insert_many(clauses))
 
         publish(contract_id, "clause_extraction", 75, "clauses extracted")
 
