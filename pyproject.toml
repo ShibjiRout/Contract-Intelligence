@@ -39,8 +39,17 @@ dependencies = [
     "passlib[bcrypt]>=1.7",
     "bcrypt>=3.2,<4.0",
     "cryptography>=42.0",
-    # Logging
+    # Logging / Tracing
     "structlog>=24.0",
+    "email-validator>=2.3.0",
+    "opentelemetry-api>=1.25",
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-instrumentation-fastapi>=0.46b0",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "python-magic-bin>=0.4.14; sys_platform == 'win32'",
+    "python-magic>=0.4.27; sys_platform != 'win32'",
+    "langgraph-checkpoint>=1.0",
 ]
 
 [project.optional-dependencies]
