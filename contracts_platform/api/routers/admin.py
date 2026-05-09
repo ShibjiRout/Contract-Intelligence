@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import Optional
 
 import openai
@@ -25,15 +24,9 @@ from contracts_platform.db.postgresql.client import AsyncSessionLocal, get_sessi
 from contracts_platform.db.postgresql.models import PlaybookRule
 from contracts_platform.db.postgresql.repositories import rule_repo
 from contracts_platform.db.qdrant.repositories import clause_vector_repo
-from contracts_platform.db.qdrant.repositories.clause_vector_repo import (
-    create_temp_collection,
-    delete_temp_collection,
-    search_collection,
-    upsert_chunk,
-)
-from contracts_platform.pipeline.embedder import embed_text
-from contracts_platform.pipeline.ocr.extractor import extract_pages, extract_text
-from contracts_platform.pipeline.playbook_extractor import extract_playbook_rules_from_text
+from contracts_platform.pipeline.ocr.extractor import extract_markdown, extract_text
+from contracts_platform.pipeline.ocr.splitter import split_markdown_by_headings
+from contracts_platform.pipeline.playbook_extractor import process_entire_playbook
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = structlog.get_logger()
@@ -255,9 +248,10 @@ async def _do_upload_playbook_pdf(file: UploadFile, session: AsyncSession, curre
     )
 
     try:
-        pages = await extract_pages(file_bytes, filename)
+        markdown = await extract_markdown(file_bytes, filename)
+        pages = split_markdown_by_headings(markdown)
     except Exception as exc:
-        logger.error("admin.playbook_pdf.ocr_failed", filename=filename, error=str(exc))
+        logger.error("admin.playbook_pdf.ocr_failed", filename=filename, error=str(exc), exc_info=True)
         raise HTTPException(
             status_code=422,
             detail={
@@ -268,59 +262,14 @@ async def _do_upload_playbook_pdf(file: UploadFile, session: AsyncSession, curre
             },
         )
 
-    # Build ephemeral Qdrant collection for cross-page RAG context
-    temp_name = ""
-    try:
-        temp_name = f"playbook_ingest_{uuid.uuid4().hex}"
-        await create_temp_collection(temp_name)
-        for page in pages:
-            page_text = page.get("text", "").strip()
-            if not page_text:
-                continue
-            vector = await embed_text(page_text)
-            await upsert_chunk(
-                temp_name,
-                str(page.get("page_num", 0)),
-                vector,
-                {"text": page_text, "page_num": page.get("page_num", 0)},
-            )
-        logger.info("admin.playbook_pdf.temp_collection.ready", temp_name=temp_name, filename=filename)
-    except Exception as exc:
-        logger.warning("admin.playbook_pdf.temp_collection.failed", error=str(exc))
-        temp_name = ""
+    all_raw_rules = await process_entire_playbook(pages)
+    logger.info("admin.playbook_pdf.rules_extracted", filename=filename, total=len(all_raw_rules))
 
     created_responses: list[PlaybookRuleResponse] = []
 
-    for page in pages:
-        page_text = page.get("text", "").strip()
-        if not page_text:
-            continue
-
-        page_num = page.get("page_num", "?")
-        logger.info("admin.playbook_pdf.processing_page", page_num=page_num, filename=filename)
-
-        # Retrieve cross-page context from ephemeral collection
-        context = ""
-        if temp_name:
-            try:
-                vector = await embed_text(page_text)
-                context_chunks = await search_collection(temp_name, vector, limit=4)
-                other_chunks = [c for c in context_chunks if c["payload"].get("page_num") != page_num]
-                context = "\n---\n".join(c["payload"]["text"] for c in other_chunks)
-            except Exception as exc:
-                logger.warning("admin.playbook_pdf.rag_retrieval_failed", page_num=page_num, error=str(exc))
-
-        raw_rules = await extract_playbook_rules_from_text(page_text, context=context)
-
-        logger.info(
-            "admin.playbook_pdf.page_done",
-            page_num=page_num,
-            rules_this_page=len(raw_rules),
-        )
-
-        for rule_dict in raw_rules:
-            # Normalise / validate required fields — skip malformed entries
-            try:
+    for rule_dict in all_raw_rules:
+        # Normalise / validate required fields — skip malformed entries
+        try:
                 rule_create = PlaybookRuleCreate(
                     clause_type=rule_dict["clause_type"],
                     jurisdiction=rule_dict["jurisdiction"],
@@ -411,12 +360,6 @@ async def _do_upload_playbook_pdf(file: UploadFile, session: AsyncSession, curre
                     is_active=rule.is_active,
                 )
             )
-
-    if temp_name:
-        try:
-            await delete_temp_collection(temp_name)
-        except Exception as exc:
-            logger.warning("admin.playbook_pdf.temp_cleanup_failed", error=str(exc))
 
     logger.info(
         "admin.playbook_pdf.completed",
