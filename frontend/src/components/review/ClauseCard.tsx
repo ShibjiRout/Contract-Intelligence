@@ -12,7 +12,7 @@ interface Props {
 type Toast = { message: string; type: 'success' | 'error' }
 
 export default function ClauseCard({ clause, onUpdated }: Props) {
-  const { canModify } = useAuth()
+  const { canModify, hasRole } = useAuth()
   const [expanded, setExpanded] = useState(false)
   const [modifying, setModifying] = useState(false)
   const [modifiedText, setModifiedText] = useState(clause.suggested_fix ?? clause.raw_text)
@@ -59,6 +59,19 @@ export default function ClauseCard({ clause, onUpdated }: Props) {
       onUpdated?.()
     } catch {
       showToast('Failed to modify clause.', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    setLoading(true)
+    try {
+      await clausesApi.delete(clause.clause_id)
+      showToast('Clause deleted.', 'success')
+      onUpdated?.()
+    } catch {
+      showToast('Failed to delete clause.', 'error')
     } finally {
       setLoading(false)
     }
@@ -155,6 +168,18 @@ export default function ClauseCard({ clause, onUpdated }: Props) {
             className="text-xs border border-gray-300 text-gray-700 px-3 py-1.5 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
           >
             Modify
+          </button>
+        </div>
+      )}
+
+      {hasRole('admin') && (
+        <div className="mt-2 pt-2 border-t border-gray-100">
+          <button
+            onClick={handleDelete}
+            disabled={loading}
+            className="text-xs border border-red-300 text-red-600 px-3 py-1.5 rounded-md hover:bg-red-50 disabled:opacity-50 transition-colors"
+          >
+            Delete
           </button>
         </div>
       )}

@@ -28,7 +28,9 @@ export default function ReviewPage() {
     enabled: !!contractId,
   })
 
-  const pdfUrl = `${import.meta.env.VITE_API_URL}/contracts/${contractId}/file`
+  const pdfUrl: string | null = contract
+    ? `${import.meta.env.VITE_API_URL}/contracts/${contractId}/file`
+    : null
   const firstClauseId = clauses[0]?.clause_id ?? null
 
   return (
