@@ -128,6 +128,80 @@ async def create_playbook_rule(
     )
 
 
+@router.delete("/playbook-rules/clear-all", response_model=ClearPlaybookDataResponse)
+async def clear_playbook_data(
+    current_user: dict = Depends(require_role("admin")),
+) -> ClearPlaybookDataResponse:
+    """Delete all playbook rules from PostgreSQL, Qdrant (clauses_playbook collection), and Neo4j."""
+    postgres_rules_deleted = 0
+    qdrant_collection_cleared = False
+    neo4j_nodes_deleted = 0
+
+    # PostgreSQL — truncate playbook tables
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text("SELECT COUNT(*) FROM playbook_rules"))
+            postgres_rules_deleted = result.scalar() or 0
+            await conn.execute(
+                text(
+                    "TRUNCATE TABLE rule_versions, playbook_rules RESTART IDENTITY CASCADE"
+                )
+            )
+        logger.info(
+            "admin.clear_playbook.postgres_truncated",
+            rules_deleted=postgres_rules_deleted,
+            user=current_user.get("sub"),
+        )
+    except Exception as exc:
+        logger.error("admin.clear_playbook.postgres_failed", error=str(exc))
+
+    # Qdrant — delete clauses_playbook collection
+    try:
+        qdrant = get_qdrant_client()
+        collections = await qdrant.get_collections()
+        names = [c.name for c in collections.collections]
+        if "clauses_playbook" in names:
+            await qdrant.delete_collection("clauses_playbook")
+            qdrant_collection_cleared = True
+        logger.info(
+            "admin.clear_playbook.qdrant_cleared",
+            cleared=qdrant_collection_cleared,
+            user=current_user.get("sub"),
+        )
+    except Exception as exc:
+        logger.error("admin.clear_playbook.qdrant_failed", error=str(exc))
+
+    # Neo4j — delete PlaybookRule nodes only
+    try:
+        driver = await get_driver()
+        async with driver.session() as neo4j_session:
+            result = await neo4j_session.run(
+                "MATCH (n:PlaybookRule) DETACH DELETE n"
+            )
+            summary = await result.consume()
+            neo4j_nodes_deleted = summary.counters.nodes_deleted
+        logger.info(
+            "admin.clear_playbook.neo4j_cleared",
+            nodes_deleted=neo4j_nodes_deleted,
+            user=current_user.get("sub"),
+        )
+    except Exception as exc:
+        logger.error("admin.clear_playbook.neo4j_failed", error=str(exc))
+
+    logger.info(
+        "admin.clear_playbook.completed",
+        postgres_rules_deleted=postgres_rules_deleted,
+        qdrant_collection_cleared=qdrant_collection_cleared,
+        neo4j_nodes_deleted=neo4j_nodes_deleted,
+        user=current_user.get("sub"),
+    )
+    return ClearPlaybookDataResponse(
+        postgres_rules_deleted=postgres_rules_deleted,
+        qdrant_collection_cleared=qdrant_collection_cleared,
+        neo4j_nodes_deleted=neo4j_nodes_deleted,
+    )
+
+
 @router.patch("/playbook-rules/{rule_id}", response_model=PlaybookRuleResponse)
 async def update_playbook_rule(
     rule_id: int,
@@ -373,78 +447,4 @@ async def _do_upload_playbook_pdf(file: UploadFile, session: AsyncSession, curre
     return PlaybookRulePDFUploadResponse(
         rules_created=len(created_responses),
         rules=created_responses,
-    )
-
-
-@router.delete("/playbook-rules/clear-all", response_model=ClearPlaybookDataResponse)
-async def clear_playbook_data(
-    current_user: dict = Depends(require_role("admin")),
-) -> ClearPlaybookDataResponse:
-    """Delete all playbook rules from PostgreSQL, Qdrant (clauses_playbook collection), and Neo4j."""
-    postgres_rules_deleted = 0
-    qdrant_collection_cleared = False
-    neo4j_nodes_deleted = 0
-
-    # PostgreSQL — truncate playbook tables
-    try:
-        async with engine.begin() as conn:
-            result = await conn.execute(text("SELECT COUNT(*) FROM playbook_rules"))
-            postgres_rules_deleted = result.scalar() or 0
-            await conn.execute(
-                text(
-                    "TRUNCATE TABLE rule_versions, playbook_rules RESTART IDENTITY CASCADE"
-                )
-            )
-        logger.info(
-            "admin.clear_playbook.postgres_truncated",
-            rules_deleted=postgres_rules_deleted,
-            user=current_user.get("sub"),
-        )
-    except Exception as exc:
-        logger.error("admin.clear_playbook.postgres_failed", error=str(exc))
-
-    # Qdrant — delete clauses_playbook collection
-    try:
-        qdrant = get_qdrant_client()
-        collections = await qdrant.get_collections()
-        names = [c.name for c in collections.collections]
-        if "clauses_playbook" in names:
-            await qdrant.delete_collection("clauses_playbook")
-            qdrant_collection_cleared = True
-        logger.info(
-            "admin.clear_playbook.qdrant_cleared",
-            cleared=qdrant_collection_cleared,
-            user=current_user.get("sub"),
-        )
-    except Exception as exc:
-        logger.error("admin.clear_playbook.qdrant_failed", error=str(exc))
-
-    # Neo4j — delete PlaybookRule nodes only
-    try:
-        driver = await get_driver()
-        async with driver.session() as neo4j_session:
-            result = await neo4j_session.run(
-                "MATCH (n:PlaybookRule) DETACH DELETE n"
-            )
-            summary = await result.consume()
-            neo4j_nodes_deleted = summary.counters.nodes_deleted
-        logger.info(
-            "admin.clear_playbook.neo4j_cleared",
-            nodes_deleted=neo4j_nodes_deleted,
-            user=current_user.get("sub"),
-        )
-    except Exception as exc:
-        logger.error("admin.clear_playbook.neo4j_failed", error=str(exc))
-
-    logger.info(
-        "admin.clear_playbook.completed",
-        postgres_rules_deleted=postgres_rules_deleted,
-        qdrant_collection_cleared=qdrant_collection_cleared,
-        neo4j_nodes_deleted=neo4j_nodes_deleted,
-        user=current_user.get("sub"),
-    )
-    return ClearPlaybookDataResponse(
-        postgres_rules_deleted=postgres_rules_deleted,
-        qdrant_collection_cleared=qdrant_collection_cleared,
-        neo4j_nodes_deleted=neo4j_nodes_deleted,
     )
