@@ -12,7 +12,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 
 interface Props {
   contractId: string
-  pdfUrl: string
+  pdfUrl: string | null
   clauses: Clause[]
   onClauseUpdated?: () => void
 }
@@ -25,7 +25,12 @@ export default function ContractViewer({ pdfUrl, clauses, onClauseUpdated }: Pro
     <div className="flex h-full gap-4">
       {/* Left: PDF Viewer */}
       <div className="w-2/5 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50">
-        {pdfError ? (
+        {!pdfUrl ? (
+          <div className="flex items-center justify-center h-full text-sm text-gray-500 gap-2">
+            <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+            <span>Loading PDF…</span>
+          </div>
+        ) : pdfError ? (
           <div className="flex items-center justify-center h-full text-sm text-gray-500 p-8 text-center">
             <div>
               <svg className="w-10 h-10 mx-auto text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">

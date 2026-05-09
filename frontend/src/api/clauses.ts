@@ -7,4 +7,5 @@ export const clausesApi = {
   modify: (clauseId: string, modified_text: string) =>
     client.patch(`/clauses/${clauseId}/modify`, { modified_text }),
   getRecommendation: (clauseId: string) => client.get<Explanation>(`/clauses/${clauseId}/recommendation`),
+  delete: (clauseId: string) => client.delete(`/clauses/${clauseId}`),
 }
