@@ -1,5 +1,5 @@
 from contracts_platform.core.logging import logger
-from contracts_platform.db.postgresql.repositories import rule_repo
+from contracts_platform.db.postgresql.repositories.rule_repo import get_rules_for_jurisdiction
 from contracts_platform.orchestration.state import ContractReviewState
 
 
@@ -25,10 +25,10 @@ async def playbook_check_node(state: ContractReviewState) -> dict:
     )
 
     try:
-        from contracts_platform.db.postgresql.client import get_async_session
+        from contracts_platform.db.postgresql.client import AsyncSessionLocal
 
-        async with get_async_session() as session:
-            rules = await rule_repo.get_rules_for_jurisdiction(session, jurisdiction, clause_type)
+        async with AsyncSessionLocal() as session:
+            rules = await get_rules_for_jurisdiction(session, jurisdiction, clause_type)
 
         findings: list[str] = []
         violation_count = 0

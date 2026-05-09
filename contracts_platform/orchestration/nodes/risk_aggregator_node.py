@@ -25,9 +25,9 @@ async def risk_aggregator_node(state: ContractReviewState) -> dict:
     )
 
     try:
-        from contracts_platform.db.postgresql.client import get_async_session
+        from contracts_platform.db.postgresql.client import AsyncSessionLocal
 
-        async with get_async_session() as session:
+        async with AsyncSessionLocal() as session:
             current_weights = await weights_module.get_weights(jurisdiction, session)
     except Exception as exc:
         logger.warning(

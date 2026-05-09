@@ -24,9 +24,9 @@ async def get_weights(jurisdiction: str, session) -> dict[str, float]:
         return _cache[jurisdiction]
 
     try:
-        from contracts_platform.db.postgresql.repositories import rule_repo
+        from contracts_platform.db.postgresql.repositories.rule_repo import get_weights as _get_weights
 
-        raw = await rule_repo.get_weights(session, jurisdiction)
+        raw = await _get_weights(session, jurisdiction)
         weights = {
             "postgresql": raw.get("postgresql_weight", DEFAULT_WEIGHTS["postgresql"]),
             "qdrant": raw.get("qdrant_weight", DEFAULT_WEIGHTS["qdrant"]),
