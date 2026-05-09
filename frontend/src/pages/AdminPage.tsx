@@ -4,6 +4,7 @@ import Sidebar from '../components/layout/Sidebar'
 import TopBar from '../components/layout/TopBar'
 import { useAuth } from '../hooks/useAuth'
 import { adminApi } from '../api/admin'
+import type { ClearPlaybookDataResponse } from '../api/admin'
 import type { PlaybookRule, PlaybookRuleCreate } from '../types'
 
 const CLAUSE_TYPES = [
@@ -42,6 +43,9 @@ export default function AdminPage() {
 
   const [jurisdictionFilter, setJurisdictionFilter] = useState<string>('')
   const [pdfUploading, setPdfUploading] = useState(false)
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [clearResult, setClearResult] = useState<ClearPlaybookDataResponse | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<PlaybookRuleCreate>(emptyForm())
   const [formError, setFormError] = useState<string | null>(null)
@@ -72,6 +76,23 @@ export default function AdminPage() {
   useEffect(() => {
     loadRules(jurisdictionFilter)
   }, [jurisdictionFilter])
+
+  const handleClearPlaybook = async () => {
+    setClearing(true)
+    setClearResult(null)
+    try {
+      const result = await adminApi.clearPlaybookData()
+      setClearResult(result)
+      showToast(`Cleared ${result.postgres_rules_deleted} rules from all databases.`)
+      setShowClearConfirm(false)
+      loadRules(jurisdictionFilter)
+    } catch {
+      setError('Failed to clear playbook data. Please try again.')
+      setShowClearConfirm(false)
+    } finally {
+      setClearing(false)
+    }
+  }
 
   const handleDisable = async (id: number) => {
     try {
@@ -421,6 +442,64 @@ export default function AdminPage() {
                 </table>
               )}
             </div>
+            {/* Danger Zone */}
+            <div className="border border-red-200 rounded-xl overflow-hidden shadow-sm">
+              <div className="bg-red-50 px-5 py-3 border-b border-red-200">
+                <h2 className="text-sm font-semibold text-red-700">Danger Zone</h2>
+              </div>
+              <div className="bg-white px-5 py-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Clear All Playbook Data</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Permanently deletes all playbook rules from PostgreSQL, Qdrant, and Neo4j.
+                    This cannot be undone.
+                  </p>
+                  {clearResult && (
+                    <p className="text-xs text-green-700 mt-1.5 font-medium">
+                      Last clear: {clearResult.postgres_rules_deleted} rules deleted from PostgreSQL,{' '}
+                      {clearResult.qdrant_collection_cleared ? 'Qdrant collection cleared' : 'Qdrant unchanged'},{' '}
+                      {clearResult.neo4j_nodes_deleted} Neo4j nodes removed.
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowClearConfirm(true)}
+                  className="shrink-0 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Clear All Playbook Data
+                </button>
+              </div>
+            </div>
+
+            {/* Confirm dialog */}
+            {showClearConfirm && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
+                  <h3 className="text-base font-semibold text-gray-900 mb-2">Are you sure?</h3>
+                  <p className="text-sm text-gray-600 mb-5">
+                    This will permanently delete all playbook rules from PostgreSQL, Qdrant, and
+                    Neo4j. This action cannot be undone.
+                  </p>
+                  <div className="flex items-center gap-3 justify-end">
+                    <button
+                      onClick={() => setShowClearConfirm(false)}
+                      disabled={clearing}
+                      className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleClearPlaybook}
+                      disabled={clearing}
+                      className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                    >
+                      {clearing ? 'Clearing…' : 'Yes, clear all'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         </main>
       </div>

@@ -1,6 +1,12 @@
 import client from './client'
 import type { PlaybookRule, PlaybookRuleCreate } from '../types'
 
+export interface ClearPlaybookDataResponse {
+  postgres_rules_deleted: number
+  qdrant_collection_cleared: boolean
+  neo4j_nodes_deleted: number
+}
+
 export const adminApi = {
   listRules: (jurisdiction?: string) =>
     client
@@ -19,4 +25,8 @@ export const adminApi = {
       form
     )
   },
+  clearPlaybookData: () =>
+    client
+      .delete<ClearPlaybookDataResponse>('/admin/playbook-rules/clear-all')
+      .then((r) => r.data),
 }

@@ -28,3 +28,9 @@ class PlaybookRuleResponse(BaseModel):
 class PlaybookRulePDFUploadResponse(BaseModel):
     rules_created: int
     rules: list[PlaybookRuleResponse]
+
+
+class ClearPlaybookDataResponse(BaseModel):
+    postgres_rules_deleted: int
+    qdrant_collection_cleared: bool
+    neo4j_nodes_deleted: int
