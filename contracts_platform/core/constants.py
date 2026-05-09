@@ -17,6 +17,7 @@ class ContractStatus(str, Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     ERROR = "ERROR"
+    COMPLETED = "COMPLETED"
 
 
 class ClauseType(str, Enum):
