@@ -14,3 +14,6 @@ wheels/
 
 # Environment files
 .env
+cookies.txt
+data/
+.claude/worktrees/
