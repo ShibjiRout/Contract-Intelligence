@@ -102,6 +102,17 @@ async def modify_clause(
     return {"clause_id": clause_id, "status": "modified"}
 
 
+@router.delete(
+    "/{clause_id}",
+    dependencies=[Depends(require_role("admin"))],
+)
+async def delete_clause(clause_id: str, db=Depends(get_db)):
+    await _get_clause_or_404(db, clause_id)
+    await db["clauses"].delete_one({"clause_id": clause_id})
+    logger.info("clauses.deleted", clause_id=clause_id)
+    return {"clause_id": clause_id, "deleted": True}
+
+
 @router.get(
     "/{clause_id}/recommendation",
     response_model=RecommendationResponse,
