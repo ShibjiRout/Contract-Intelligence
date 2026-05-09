@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from contracts_platform.api.middleware.logging_middleware import LoggingMiddleware
 from contracts_platform.api.middleware.rate_limit_middleware import RateLimitMiddleware
-from contracts_platform.api.routers import auth, clauses, contracts, users, webhooks
+from contracts_platform.api.routers import admin, auth, clauses, contracts, users, webhooks
 from contracts_platform.core.config import settings
 from contracts_platform.core.exceptions import (
     AuthenticationError,
@@ -88,6 +88,7 @@ async def platform_error_handler(
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
+app.include_router(admin.router)
 app.include_router(auth.router)
 app.include_router(contracts.router)
 app.include_router(clauses.router)
