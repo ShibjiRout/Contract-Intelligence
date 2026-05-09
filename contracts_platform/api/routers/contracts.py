@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from contracts_platform.api.dependencies import get_current_user, get_db
 from contracts_platform.api.schemas.clause import ClauseResponse
@@ -21,8 +21,6 @@ from contracts_platform.core.exceptions import DuplicateContractError, FileValid
 from contracts_platform.db.mongodb.repositories import contract_repo
 from contracts_platform.file_handling import storage
 from contracts_platform.file_handling.validator import validate_upload
-from contracts_platform.notifications.websocket_manager import manager
-
 router = APIRouter(prefix="/contracts", tags=["contracts"])
 logger = structlog.get_logger()
 
@@ -180,18 +178,3 @@ async def list_clauses(contract_id: str, db=Depends(get_db)):
         )
         for d in docs
     ]
-
-
-@router.websocket("/{contract_id}/ws")
-async def contract_progress_ws(
-    contract_id: str,
-    websocket: WebSocket,
-    background_tasks: BackgroundTasks,
-):
-    await manager.connect(contract_id, websocket)
-    background_tasks.add_task(manager.listen_and_forward, contract_id)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        await manager.disconnect(contract_id, websocket)
