@@ -44,13 +44,9 @@ def ingest_task(
 
         file_bytes = base64.b64decode(file_bytes_b64)
 
+        db = asyncio.run(get_database())
         asyncio.run(
-            contract_repo.update_status(
-                asyncio.run(get_database()),
-                contract_id,
-                ContractStatus.PROCESSING,
-                stage="ingestion",
-            )
+            contract_repo.update_status(db, contract_id, ContractStatus.PROCESSING, stage="ingestion")
         )
 
         # Validate MIME type
@@ -61,9 +57,6 @@ def ingest_task(
         # Validate size
         if len(file_bytes) > _MAX_SIZE_BYTES:
             raise ValueError(f"File size {len(file_bytes)} exceeds 50 MB limit")
-
-        # Duplicate detection
-        db = asyncio.run(get_database())
         is_duplicate, existing_id = asyncio.run(check_duplicate(db, file_bytes))
 
         if is_duplicate:
