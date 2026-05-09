@@ -37,6 +37,7 @@ dependencies = [
     # Auth / Security
     "python-jose[cryptography]>=3.3",
     "passlib[bcrypt]>=1.7",
+    "bcrypt>=3.2,<4.0",
     "cryptography>=42.0",
     # Logging
     "structlog>=24.0",
