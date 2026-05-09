@@ -76,7 +76,7 @@ export default function AdminPage() {
   const handleDisable = async (id: number) => {
     try {
       await adminApi.deleteRule(id)
-      showToast('Rule disabled successfully.')
+      showToast('Rule deleted successfully.')
       loadRules(jurisdictionFilter)
     } catch {
       setError('Failed to disable rule.')
@@ -408,14 +408,12 @@ export default function AdminPage() {
                           )}
                         </td>
                         <td className="px-5 py-3 text-right whitespace-nowrap">
-                          {rule.is_active && (
-                            <button
-                              onClick={() => handleDisable(rule.id)}
-                              className="text-xs text-red-600 hover:text-red-800 font-medium transition-colors"
-                            >
-                              Disable
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleDisable(rule.id)}
+                            className="text-xs text-red-600 hover:text-red-800 font-medium transition-colors"
+                          >
+                            Delete
+                          </button>
                         </td>
                       </tr>
                     ))}

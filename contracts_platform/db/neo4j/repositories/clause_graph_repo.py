@@ -59,6 +59,16 @@ async def create_playbook_rule_node(
     logger.info("neo4j.playbook_rule.created", rule_id=rule_id)
 
 
+async def delete_playbook_rule_node(rule_id: int) -> None:
+    driver = await get_driver()
+    async with driver.session() as session:
+        await session.run(
+            "MATCH (r:PlaybookRule {rule_id: $rule_id}) DETACH DELETE r",
+            rule_id=rule_id,
+        )
+    logger.info("neo4j.playbook_rule.deleted", rule_id=rule_id)
+
+
 async def find_conflicts(clause_id: str) -> list[dict]:
     driver = await get_driver()
     async with driver.session() as session:

@@ -44,6 +44,32 @@ def ocr_task(self, contract_id: str, file_bytes_b64: str, filename: str) -> None
             r = redis.from_url(settings.REDIS_URL, decode_responses=True)
             r.setex(f"ocr_text:{contract_id}", _OCR_TEXT_TTL, extracted_text)
 
+            # Embed pages into ephemeral Qdrant collection for RAG context
+            try:
+                from contracts_platform.pipeline.ocr.extractor import extract_pages
+                from contracts_platform.pipeline.embedder import embed_text
+                from contracts_platform.db.qdrant.repositories.clause_vector_repo import (
+                    create_temp_collection, upsert_chunk,
+                )
+                pages = await extract_pages(file_bytes, filename)
+                temp_name = f"contract_ingest_{contract_id}"
+                await create_temp_collection(temp_name)
+                for page in pages:
+                    page_text = page.get("text", "").strip()
+                    if not page_text:
+                        continue
+                    vector = await embed_text(page_text)
+                    await upsert_chunk(
+                        temp_name,
+                        str(page.get("page_num", 0)),
+                        vector,
+                        {"text": page_text, "page_num": page.get("page_num", 0)},
+                    )
+                r.setex(f"temp_collection:{contract_id}", 7200, temp_name)
+                logger.info("ocr_task.temp_collection.ready", contract_id=contract_id, temp_name=temp_name)
+            except Exception as exc:
+                logger.warning("ocr_task.temp_collection.failed", contract_id=contract_id, error=str(exc))
+
             from contracts_platform.file_handling.temp_storage import save_temp_text
 
             await save_temp_text(contract_id, extracted_text)

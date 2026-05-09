@@ -37,9 +37,57 @@ def clause_extraction_task(self, contract_id: str) -> None:
 
             from contracts_platform.pipeline.clause_extraction.extractor import extract_clauses
 
+            # RAG: get ephemeral Qdrant collection name stored by ocr_task
+            temp_name = r.get(f"temp_collection:{contract_id}") or ""
+
             clauses = await extract_clauses(contract_id, text)
             if clauses:
                 await db["clauses"].insert_many(clauses)
+
+            # Save clauses to permanent Qdrant + Neo4j
+            contract_doc = await db["contracts"].find_one({"contract_id": contract_id}) or {}
+            tenant_id = contract_doc.get("tenant_id", "default")
+            try:
+                from contracts_platform.pipeline.embedder import embed_text
+                from contracts_platform.db.qdrant.repositories.clause_vector_repo import upsert_clause
+                from contracts_platform.db.neo4j.repositories.clause_graph_repo import create_clause_node
+                for clause in (clauses or []):
+                    try:
+                        vector = await embed_text(clause.get("raw_text", ""))
+                        await upsert_clause(
+                            tenant_id=tenant_id,
+                            clause_id=clause["clause_id"],
+                            vector=vector,
+                            payload={
+                                "clause_type": clause.get("clause_type", ""),
+                                "contract_id": contract_id,
+                                "status": "pending",
+                                "risk_level": "UNKNOWN",
+                                "created_at": str(clause.get("created_at", "")),
+                            },
+                        )
+                        await create_clause_node(
+                            clause_id=clause["clause_id"],
+                            contract_id=contract_id,
+                            clause_type=clause.get("clause_type", ""),
+                            risk_level="PENDING",
+                        )
+                    except Exception as exc:
+                        logger.warning("clause_extraction_task.clause_storage_failed",
+                                       clause_id=clause.get("clause_id"), error=str(exc))
+            except Exception as exc:
+                logger.warning("clause_extraction_task.storage_import_failed", error=str(exc))
+
+            # Cleanup ephemeral Qdrant collection
+            if temp_name:
+                try:
+                    from contracts_platform.db.qdrant.repositories.clause_vector_repo import delete_temp_collection
+                    await delete_temp_collection(temp_name)
+                    r.delete(f"temp_collection:{contract_id}")
+                    logger.info("clause_extraction_task.temp_collection.deleted", contract_id=contract_id)
+                except Exception as exc:
+                    logger.warning("clause_extraction_task.temp_cleanup_failed",
+                                   contract_id=contract_id, error=str(exc))
 
             publish(contract_id, "clause_extraction", 75, "clauses extracted")
 

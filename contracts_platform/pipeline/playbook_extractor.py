@@ -10,38 +10,57 @@ from contracts_platform.core.config import settings
 logger = structlog.get_logger()
 
 _SYSTEM_PROMPT = (
-    "You are a senior legal compliance engineer. Your task is to read a company playbook policy "
-    "document and extract every enforceable rule it contains as a structured JSON array.\n\n"
+    "You are a senior legal compliance engineer. Your task is to read one page of a company "
+    "NDA playbook and extract every enforceable clause rule it contains as a structured JSON "
+    "array.\n\n"
+    "## SKIP these administrative sections — return [] if the page contains ONLY these\n\n"
+    "- APPROVAL AUTHORITY (tables about who can sign off deviations)\n"
+    "- PURPOSE AND SCOPE / HOW TO USE THIS PLAYBOOK\n"
+    "- MISSING CLAUSES / ESCALATION CONTACTS / VERSION HISTORY\n"
+    "- Cover pages, disclaimers, or table-of-contents pages\n\n"
+    "Only extract rules from sections headed 'CLAUSE X — ...' with Preferred / Fallback / "
+    "Do not accept positions.\n\n"
+    "## Clause type mapping\n\n"
+    "Map each playbook clause heading to the nearest clause_type from this fixed list:\n"
+    "CONFIDENTIALITY, INDEMNITY, LIABILITY, TERMINATION, GOVERNING_LAW, DISPUTE_RESOLUTION, "
+    "FORCE_MAJEURE, PAYMENT, INTELLECTUAL_PROPERTY, NON_COMPETE, NON_SOLICITATION, WARRANTY\n\n"
+    "Mapping guide:\n"
+    "- Definition of Confidential Information → CONFIDENTIALITY\n"
+    "- Permitted Disclosures → CONFIDENTIALITY\n"
+    "- Obligations of the Receiving Party → CONFIDENTIALITY\n"
+    "- Purpose of Disclosure → CONFIDENTIALITY\n"
+    "- Survival of Confidentiality Obligations → TERMINATION\n"
+    "- Return or Destruction of Information → TERMINATION\n"
+    "- Term of Agreement → TERMINATION\n"
+    "- Liability / Limitation of Liability → LIABILITY\n"
+    "- Governing Law / Jurisdiction → GOVERNING_LAW\n"
+    "- Injunctive Relief / Dispute Resolution → DISPUTE_RESOLUTION\n\n"
     "## Output schema\n\n"
     "Return a JSON array. Every element must have exactly these five keys:\n"
-    "- clause_type: one of CONFIDENTIALITY, INDEMNITY, LIABILITY, TERMINATION, GOVERNING_LAW, "
-    "DISPUTE_RESOLUTION, FORCE_MAJEURE, PAYMENT, INTELLECTUAL_PROPERTY, NON_COMPETE, "
-    "NON_SOLICITATION, WARRANTY\n"
-    "- jurisdiction: two-letter or short code (UK, US, IN, EU, AU, SG, etc.)\n"
+    "- clause_type: one value from the fixed list above (never invent new clause types)\n"
+    "- jurisdiction: inferred from the document (see rule below)\n"
     "- rule_type: exactly one of REQUIRED, FORBIDDEN, or CONDITIONAL\n"
     "- description: a precise statement of what the rule enforces or prohibits (minimum 15 "
     "characters, written as a complete sentence)\n"
-    "- weight: float from 0.0 to 10.0 reflecting commercial importance — use 9.0–10.0 for "
-    "unlimited liability or unilateral termination exposure, 7.0–8.9 for significant financial "
-    "or IP risk, 5.0–6.9 for standard compliance obligations, 1.0–4.9 for procedural or "
-    "low-risk rules\n\n"
-    "## Jurisdiction inference rule\n\n"
-    "Before extracting any rules, identify the governing law stated in the document. If the "
-    "document contains any of: 'England and Wales', 'English law', 'English courts', 'laws of "
-    "England', or the £ symbol, set jurisdiction='UK' for every single rule you output. Do not "
-    "use 'US' unless the document explicitly states 'United States', 'US law', 'New York law', "
-    "or similar US jurisdiction language.\n\n"
-    "## Strict extraction rules\n\n"
-    "1. Extract one rule per distinct enforceable obligation or prohibition. If a clause contains "
-    "a Preferred position, a Fallback position, and a Do Not Accept position, that is three "
-    "separate rules (REQUIRED for Preferred, CONDITIONAL for Fallback, FORBIDDEN for Do Not "
-    "Accept).\n"
-    "2. Deduplication: before finalising your output, check whether any two rules share the same "
-    "clause_type AND rule_type. If yes, merge them into a single rule with the more complete "
-    "description. Remove the duplicate.\n"
-    "3. Do not invent rules that are not stated in the document. Do not add commentary or "
-    "explanatory text outside the JSON array.\n"
-    "4. Return ONLY a valid JSON array with no markdown, no code fences, and no additional text."
+    "- weight: float from 0.0 to 10.0 — use 9.0–10.0 for unlimited liability or unilateral "
+    "termination exposure, 7.0–8.9 for significant financial or IP risk, 5.0–6.9 for standard "
+    "compliance obligations, 1.0–4.9 for procedural or low-risk rules\n\n"
+    "## Jurisdiction inference\n\n"
+    "If the document contains 'England and Wales', 'English law', 'English courts', 'laws of "
+    "England', or the £ symbol, set jurisdiction='UK' for every rule. Do not use 'US' unless "
+    "the document explicitly states US jurisdiction.\n\n"
+    "## Extraction rules\n\n"
+    "1. For each CLAUSE section on this page, extract exactly three rules:\n"
+    "   - Preferred position → rule_type=REQUIRED\n"
+    "   - Fallback position → rule_type=CONDITIONAL\n"
+    "   - Do not accept position → rule_type=FORBIDDEN\n"
+    "2. If a section has no fallback, extract only REQUIRED and FORBIDDEN.\n"
+    "3. Do NOT merge or deduplicate rules. Multiple CONFIDENTIALITY REQUIRED rules are correct "
+    "when they come from different clause sections (e.g. Clause A and Clause B are both "
+    "CONFIDENTIALITY but must remain separate rules with different descriptions).\n"
+    "4. Do not invent rules not stated in the text.\n"
+    "5. Return ONLY a valid JSON array — no markdown, no code fences, no extra text.\n"
+    "6. If this page contains no extractable clause rules, return an empty array: []"
 )
 
 # One user/assistant pair covering 3 clause types (CONFIDENTIALITY, LIABILITY, GOVERNING_LAW),
@@ -188,7 +207,7 @@ _FEW_SHOT_MESSAGES: list[dict] = [
 ]
 
 
-async def extract_playbook_rules_from_text(text: str) -> list[dict]:
+async def extract_playbook_rules_from_text(text: str, context: str = "") -> list[dict]:
     """
     Call OpenAI GPT-4o to extract playbook rules from policy document text.
 
@@ -203,10 +222,14 @@ async def extract_playbook_rules_from_text(text: str) -> list[dict]:
     """
     try:
         oai = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        user_content = (
+            f"Related context from other pages of this playbook:\n{context}\n\n---\n\n"
+            f"Current page to extract rules from:\n{text}"
+        ) if context else text
         messages: list[dict] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             *_FEW_SHOT_MESSAGES,
-            {"role": "user", "content": text},
+            {"role": "user", "content": user_content},
         ]
         response = await oai.chat.completions.create(
             model=settings.LLM_MODEL,

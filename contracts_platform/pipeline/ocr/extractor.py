@@ -34,3 +34,27 @@ async def extract_text(file_bytes: bytes, filename: str) -> str:
 
     full_text = "\n\n".join(p.get("text", "") for p in pages)
     return full_text
+
+
+async def extract_pages(file_bytes: bytes, filename: str) -> list[dict]:
+    """Returns per-page OCR output: [{page_num, text, confidence, tables}, ...]"""
+    pages = await azure_ocr_provider.analyze_document(file_bytes, filename)
+
+    low_conf_pages = conf_module.find_low_confidence_pages(pages)
+    if low_conf_pages:
+        logger.warning(
+            "ocr.low_confidence_pages",
+            filename=filename,
+            page_numbers=low_conf_pages,
+            threshold=conf_module.CONFIDENCE_THRESHOLD,
+        )
+
+    overall = conf_module.overall_confidence(pages)
+    logger.info(
+        "ocr.confidence_summary",
+        filename=filename,
+        overall_confidence=round(overall, 4),
+        total_pages=len(pages),
+    )
+
+    return pages

@@ -257,7 +257,7 @@ def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> fl
     return (prompt_tokens * rates["prompt"] + completion_tokens * rates["completion"]) / 1_000_000
 
 
-async def extract_clauses(contract_id: str, text: str) -> list[dict]:
+async def extract_clauses(contract_id: str, text: str, context: str = "") -> list[dict]:
     """
     Main clause extraction entry point called by clause_extraction_task.
 
@@ -278,7 +278,10 @@ async def extract_clauses(contract_id: str, text: str) -> list[dict]:
         *_FEW_SHOT_MESSAGES,
         {
             "role": "user",
-            "content": f"Extract all clauses from the following contract text:\n\n{text}",
+            "content": (
+                f"Related context retrieved from other sections of this contract:\n{context}\n\n---\n\n"
+                f"Extract all clauses from the following contract text:\n\n{text}"
+            ) if context else f"Extract all clauses from the following contract text:\n\n{text}",
         },
     ]
 

@@ -42,6 +42,44 @@ async def delete_clause(tenant_id: str, clause_id: str) -> None:
     logger.info("qdrant.delete", clause_id=clause_id, tenant_id=tenant_id)
 
 
+async def create_temp_collection(collection_name: str, vector_size: int = 1536) -> None:
+    """Create a temporary Qdrant collection for RAG ingestion."""
+    from qdrant_client.models import VectorParams, Distance
+    client = get_qdrant_client()
+    await client.create_collection(
+        collection_name=collection_name,
+        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+    )
+    logger.info("qdrant.temp_collection.created", collection=collection_name)
+
+
+async def upsert_chunk(collection_name: str, chunk_id: str, vector: list[float], payload: dict) -> None:
+    """Upsert a raw text chunk into any Qdrant collection."""
+    client = get_qdrant_client()
+    await client.upsert(
+        collection_name=collection_name,
+        points=[PointStruct(id=chunk_id, vector=vector, payload=payload)],
+    )
+
+
+async def search_collection(collection_name: str, vector: list[float], limit: int = 5) -> list[dict]:
+    """Vector search in any collection (not tenant-scoped)."""
+    client = get_qdrant_client()
+    results = await client.search(
+        collection_name=collection_name,
+        query_vector=vector,
+        limit=limit,
+    )
+    return [{"score": r.score, "payload": r.payload} for r in results]
+
+
+async def delete_temp_collection(collection_name: str) -> None:
+    """Delete an ephemeral Qdrant collection after ingestion is complete."""
+    client = get_qdrant_client()
+    await client.delete_collection(collection_name=collection_name)
+    logger.info("qdrant.temp_collection.deleted", collection=collection_name)
+
+
 async def cleanup_stale(tenant_id: str, older_than_days: int = 30) -> int:
     client = get_qdrant_client()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat()
