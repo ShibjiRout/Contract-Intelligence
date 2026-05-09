@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import timedelta
 
 import structlog
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from contracts_platform.api.dependencies import get_db
+from contracts_platform.api.dependencies import get_current_user, get_db
 from contracts_platform.api.schemas.auth import LoginRequest, TokenResponse
 from contracts_platform.auth.oauth2 import authenticate_user
 from contracts_platform.core.config import settings
@@ -86,3 +86,16 @@ async def logout(response: Response):
     response.delete_cookie("access_token")
     response.delete_cookie("refresh_token")
     return {"detail": "Logged out successfully."}
+
+
+@router.get("/me")
+async def get_me(
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    doc = await db["users"].find_one(
+        {"user_id": current_user["sub"]}, {"_id": 0, "hashed_password": 0}
+    )
+    if doc is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return doc

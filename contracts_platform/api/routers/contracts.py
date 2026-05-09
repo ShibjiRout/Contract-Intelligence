@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
 from contracts_platform.api.dependencies import get_current_user, get_db
 from contracts_platform.api.schemas.clause import ClauseResponse
@@ -21,6 +21,7 @@ from contracts_platform.core.exceptions import DuplicateContractError, FileValid
 from contracts_platform.db.mongodb.repositories import contract_repo
 from contracts_platform.file_handling import storage
 from contracts_platform.file_handling.validator import validate_upload
+from contracts_platform.notifications.websocket_manager import manager
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
 logger = structlog.get_logger()
@@ -90,6 +91,36 @@ async def upload_contract(
 
 
 @router.get(
+    "/",
+    response_model=list[ContractDetailResponse],
+    dependencies=[Depends(require_role("junior_lawyer", "senior_lawyer", "admin"))],
+)
+async def list_contracts(
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    cursor = (
+        db["contracts"]
+        .find({"tenant_id": current_user["tenant_id"]}, {"_id": 0})
+        .sort("created_at", -1)
+        .limit(100)
+    )
+    docs = await cursor.to_list(length=100)
+    return [
+        ContractDetailResponse(
+            contract_id=d["contract_id"],
+            filename=d["filename"],
+            status=d["status"],
+            current_stage=d.get("current_stage"),
+            final_risk=d.get("final_risk"),
+            created_at=d["created_at"],
+            updated_at=d["updated_at"],
+        )
+        for d in docs
+    ]
+
+
+@router.get(
     "/{contract_id}",
     response_model=ContractDetailResponse,
     dependencies=[Depends(require_role("junior_lawyer", "senior_lawyer", "admin"))],
@@ -149,3 +180,18 @@ async def list_clauses(contract_id: str, db=Depends(get_db)):
         )
         for d in docs
     ]
+
+
+@router.websocket("/{contract_id}/ws")
+async def contract_progress_ws(
+    contract_id: str,
+    websocket: WebSocket,
+    background_tasks: BackgroundTasks,
+):
+    await manager.connect(contract_id, websocket)
+    background_tasks.add_task(manager.listen_and_forward, contract_id)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        await manager.disconnect(contract_id, websocket)
