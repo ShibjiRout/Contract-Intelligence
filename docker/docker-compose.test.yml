@@ -1,0 +1,36 @@
+version: "3.9"
+
+# Lightweight stack for integration/e2e tests — no persistent volumes
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: contract_platform_test
+    ports:
+      - "5432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    tmpfs:
+      - /qdrant/storage
+
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/testpassword
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    tmpfs:
+      - /data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
