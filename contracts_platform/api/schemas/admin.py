@@ -23,3 +23,8 @@ class PlaybookRuleResponse(BaseModel):
     description: str
     weight: float
     is_active: bool
+
+
+class PlaybookRulePDFUploadResponse(BaseModel):
+    rules_created: int
+    rules: list[PlaybookRuleResponse]
