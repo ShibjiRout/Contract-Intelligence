@@ -27,7 +27,7 @@ from contracts_platform.db.qdrant.client import get_qdrant_client
 from contracts_platform.db.postgresql.models import PlaybookRule
 from contracts_platform.db.postgresql.repositories import rule_repo
 from contracts_platform.db.qdrant.repositories import clause_vector_repo
-from contracts_platform.pipeline.ocr.extractor import extract_markdown, extract_text
+from contracts_platform.pipeline.ocr.extractor import extract_markdown
 from contracts_platform.pipeline.ocr.splitter import split_markdown_by_headings
 from contracts_platform.pipeline.playbook_extractor import process_entire_playbook
 
@@ -126,6 +126,24 @@ async def create_playbook_rule(
         weight=rule.weight,
         is_active=rule.is_active,
     )
+
+
+@router.post(
+    "/playbook-rules/upload-pdf",
+    response_model=PlaybookRulePDFUploadResponse,
+    status_code=201,
+    include_in_schema=True,
+)
+async def upload_playbook_pdf(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_role("admin")),
+) -> PlaybookRulePDFUploadResponse:
+    """
+    Upload a company policy PDF, extract playbook rules via OCR + LLM, and persist each rule
+    to PostgreSQL, Qdrant, and Neo4j.
+    """
+    async with AsyncSessionLocal() as session:
+        return await _do_upload_playbook_pdf(file, session, current_user)
 
 
 @router.delete("/playbook-rules/clear-all", response_model=ClearPlaybookDataResponse)
@@ -279,24 +297,6 @@ async def delete_playbook_rule(
         logger.warning("admin.playbook_rule.neo4j_delete_failed", rule_id=rule_id, error=str(exc))
 
     logger.info("admin.playbook_rule.deleted", rule_id=rule_id, user=current_user.get("sub"))
-
-
-@router.post(
-    "/playbook-rules/upload-pdf",
-    response_model=PlaybookRulePDFUploadResponse,
-    status_code=201,
-    include_in_schema=True,
-)
-async def upload_playbook_pdf(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(require_role("admin")),
-) -> PlaybookRulePDFUploadResponse:
-    """
-    Upload a company policy PDF, extract playbook rules via OCR + LLM, and persist each rule
-    to PostgreSQL, Qdrant, and Neo4j.
-    """
-    async with AsyncSessionLocal() as session:
-        return await _do_upload_playbook_pdf(file, session, current_user)
 
 
 async def _do_upload_playbook_pdf(file: UploadFile, session: AsyncSession, current_user: dict) -> PlaybookRulePDFUploadResponse:
