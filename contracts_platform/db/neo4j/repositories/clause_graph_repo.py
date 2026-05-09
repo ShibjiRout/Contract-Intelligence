@@ -31,6 +31,34 @@ async def add_review_decision(party_id: str, contract_id: str, reviewer_id: str,
         )
 
 
+async def create_playbook_rule_node(
+    rule_id: int,
+    clause_type: str,
+    jurisdiction: str,
+    rule_type: str,
+    description: str,
+) -> None:
+    """MERGE a PlaybookRule node and link it to Jurisdiction and ClauseType nodes."""
+    driver = await get_driver()
+    async with driver.session() as session:
+        await session.run(
+            "MERGE (r:PlaybookRule {rule_id: $rule_id}) "
+            "SET r.clause_type = $clause_type, r.jurisdiction = $jurisdiction, "
+            "r.rule_type = $rule_type, r.description = $description "
+            "WITH r "
+            "MERGE (j:Jurisdiction {code: $jurisdiction}) "
+            "MERGE (ct:ClauseType {name: $clause_type}) "
+            "MERGE (r)-[:APPLIES_TO]->(j) "
+            "MERGE (r)-[:GOVERNS]->(ct)",
+            rule_id=rule_id,
+            clause_type=clause_type,
+            jurisdiction=jurisdiction,
+            rule_type=rule_type,
+            description=description,
+        )
+    logger.info("neo4j.playbook_rule.created", rule_id=rule_id)
+
+
 async def find_conflicts(clause_id: str) -> list[dict]:
     driver = await get_driver()
     async with driver.session() as session:
