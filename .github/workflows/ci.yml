@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+      - name: Black check
+        run: black --check --line-length 100 contracts_platform/
+      - name: isort check
+        run: isort --check-only --profile black contracts_platform/
+      - name: flake8
+        run: flake8 --max-line-length 100 contracts_platform/
+
+  type-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+      - name: mypy
+        run: mypy contracts_platform/ --strict --ignore-missing-imports
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install bandit
+        run: uv pip install --system bandit
+      - name: bandit scan
+        run: bandit -r contracts_platform/ -ll --exit-zero
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --cov=contracts_platform --cov-report=xml --cov-fail-under=60
+        env:
+          MONGODB_URL: mongodb://localhost:27017
+          POSTGRES_DSN: postgresql+asyncpg://postgres:postgres@localhost:5432/test
+          QDRANT_URL: http://localhost:6333
+          NEO4J_URL: bolt://localhost:7687
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: testpass
+          REDIS_URL: redis://localhost:6379
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          CELERY_RESULT_BACKEND: redis://localhost:6379/1
+          AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=dGVzdA==;EndpointSuffix=core.windows.net"
+          AZURE_FILE_SHARE_CONNECTION_STRING: "DefaultEndpointsProtocol=https;AccountName=test;AccountKey=dGVzdA==;EndpointSuffix=core.windows.net"
+          AZURE_FILE_SHARE_NAME: test
+          AZURE_STORAGE_CONTAINER_NAME: test
+          OPENAI_API_KEY: sk-test-key
+          JWT_SECRET: test-jwt-secret-key-for-ci-only
+          ENCRYPTION_KEY: "dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktb25seQ=="
+          UPSTASH_REDIS_TOKEN: test-token
+          AZURE_OCR_ENDPOINT: https://test.cognitiveservices.azure.com/
+          AZURE_OCR_KEY: test-key
