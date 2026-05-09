@@ -16,7 +16,7 @@ async def recommendation_node(state: ContractReviewState) -> dict:
     clause_id = state["clause_id"]
     clause_type = state["clause_type"]
     clause_text = state["clause_text"]
-    risk_indicators = state.get("graph_result") or {}
+    risk_indicators = state.get("risk_indicators") or []
     tenant_id = state["tenant_id"]
 
     with tracer.start_as_current_span("recommendation_node") as span:
