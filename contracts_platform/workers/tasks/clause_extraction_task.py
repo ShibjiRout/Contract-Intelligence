@@ -36,7 +36,7 @@ def clause_extraction_task(self, contract_id: str) -> None:
         text = r.get(f"ocr_text:{contract_id}") or ""
 
         # Stub call — pipeline agent will implement
-        from pipeline.clause_extraction.extractor import extract_clauses  # type: ignore[import]
+        from contracts_platform.pipeline.clause_extraction.extractor import extract_clauses  # type: ignore[import]
 
         asyncio.run(extract_clauses(contract_id, text))  # type: ignore[arg-type]
 

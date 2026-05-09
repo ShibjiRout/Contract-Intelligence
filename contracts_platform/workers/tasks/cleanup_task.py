@@ -28,7 +28,7 @@ def cleanup_task(self, contract_id: str) -> None:
         )
 
         # Stub call — fastapi/file_handling agent will implement
-        from file_handling.temp_storage import delete_temp_file  # type: ignore[import]
+        from contracts_platform.file_handling.temp_storage import delete_temp_file  # type: ignore[import]
 
         asyncio.run(delete_temp_file(contract_id))  # type: ignore[arg-type]
 

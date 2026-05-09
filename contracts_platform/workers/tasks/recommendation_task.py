@@ -30,7 +30,7 @@ def recommendation_task(self, contract_id: str) -> None:
         )
 
         # Stub call — pipeline agent will implement
-        from pipeline.recommendation.fix_suggester import generate_fixes  # type: ignore[import]
+        from contracts_platform.pipeline.recommendation.fix_suggester import generate_fixes  # type: ignore[import]
 
         asyncio.run(generate_fixes(contract_id))  # type: ignore[arg-type]
 
