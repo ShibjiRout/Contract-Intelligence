@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Lightweight stack for integration/e2e tests — no persistent volumes
 services:
   postgres:
