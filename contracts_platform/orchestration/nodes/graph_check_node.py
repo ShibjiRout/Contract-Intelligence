@@ -29,13 +29,17 @@ async def graph_check_node(state: ContractReviewState) -> dict:
     )
 
     try:
-        # Use contract_id as party_id proxy — real party linkage wired in by other agents
+        parties = state.get("parties_mentioned") or []
+        party_id = parties[0] if parties else None
+        if not party_id:
+            return {"graph_result": {"score": 0.0, "conflict_count": 0, "conflicts": []}}
+
         conflict_count = await contract_graph_repo.get_cross_contract_conflicts(
-            party_id=contract_id,
+            party_id=party_id,
             clause_type=clause_type,
         )
 
-        risk_history = await party_repo.get_party_risk_history(party_id=contract_id)
+        risk_history = await party_repo.get_party_risk_history(party_id=party_id)
         counterparty_flags = sum(
             1 for entry in risk_history if entry.get("outcome") in ("REJECTED", "RED")
         )
