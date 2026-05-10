@@ -6,9 +6,10 @@ import { authApi } from '../api/auth'
 interface AuthState {
   user: User | null
   loading: boolean
+  checked: boolean
 }
 
-const initialState: AuthState = { user: null, loading: false }
+const initialState: AuthState = { user: null, loading: false, checked: false }
 
 export const fetchMe = createAsyncThunk('auth/me', async () => {
   const res = await authApi.me()
@@ -19,8 +20,14 @@ const authSlice = createSlice({
   name: 'auth',
   initialState,
   reducers: {
-    clearUser: (state) => { state.user = null },
-    setUser: (state, action: PayloadAction<User>) => { state.user = action.payload },
+    clearUser: (state) => {
+      state.user = null
+      state.checked = true
+    },
+    setUser: (state, action: PayloadAction<User>) => {
+      state.user = action.payload
+      state.checked = true
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -28,8 +35,13 @@ const authSlice = createSlice({
       .addCase(fetchMe.fulfilled, (state, action) => {
         state.user = action.payload
         state.loading = false
+        state.checked = true
       })
-      .addCase(fetchMe.rejected, (state) => { state.loading = false })
+      .addCase(fetchMe.rejected, (state) => {
+        state.user = null
+        state.loading = false
+        state.checked = true
+      })
   },
 })
 

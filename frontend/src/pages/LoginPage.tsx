@@ -1,4 +1,5 @@
-import { FormEvent, useState } from 'react'
+import { useState } from 'react'
+import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDispatch } from 'react-redux'
 import { authApi } from '../api/auth'
@@ -29,17 +30,18 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <div className="w-full max-w-md soft-appear">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Contract Intelligence</h1>
-          <p className="text-sm text-gray-500 mt-1">Sign in to your account</p>
+          <div className="mx-auto mb-4 h-12 w-12 rounded-xl bg-slate-950 text-amber-200 flex items-center justify-center font-black shadow-lg">CI</div>
+          <h1 className="text-2xl font-bold text-slate-950">Contract Intelligence</h1>
+          <p className="text-sm text-slate-500 mt-1">Sign in to your secure workspace</p>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8">
+        <div className="premium-panel p-8">
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Email address
               </label>
               <input
@@ -48,13 +50,13 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="field"
                 placeholder="you@firm.com"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Password
               </label>
               <input
@@ -63,7 +65,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="field"
                 placeholder="••••••••"
               />
             </div>
@@ -77,7 +79,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-indigo-600 text-white text-sm font-medium py-2.5 rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              className="btn-primary w-full py-2.5"
             >
               {loading ? 'Signing in…' : 'Sign in'}
             </button>

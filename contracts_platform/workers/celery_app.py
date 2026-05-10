@@ -21,15 +21,11 @@ app.conf.update(
     worker_pool="solo" if sys.platform == "win32" else "prefork",
 )
 
-app.autodiscover_tasks(
-    [
-        "contracts_platform.workers.tasks.ingest_task",
-        "contracts_platform.workers.tasks.ocr_task",
-        "contracts_platform.workers.tasks.clause_extraction_task",
-        "contracts_platform.workers.tasks.review_orchestration_task",
-        "contracts_platform.workers.tasks.recommendation_task",
-        "contracts_platform.workers.tasks.post_decision_task",
-        "contracts_platform.workers.tasks.cleanup_task",
-        "contracts_platform.workers.dead_letter",
-    ]
-)
+app.conf.include = [
+    "contracts_platform.workers.tasks.ingest_task",
+    "contracts_platform.workers.tasks.ocr_task",
+    "contracts_platform.workers.tasks.clause_extraction_task",
+    "contracts_platform.workers.tasks.qdrant_check_task",
+    "contracts_platform.workers.tasks.review_orchestration_task",
+    "contracts_platform.workers.dead_letter",
+]

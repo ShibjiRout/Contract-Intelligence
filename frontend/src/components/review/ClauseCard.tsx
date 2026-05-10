@@ -2,7 +2,6 @@ import { useState } from 'react'
 import type { Clause } from '../../types'
 import { clausesApi } from '../../api/clauses'
 import { useAuth } from '../../hooks/useAuth'
-import RiskBadge from './RiskBadge'
 
 interface Props {
   clause: Clause
@@ -11,11 +10,26 @@ interface Props {
 
 type Toast = { message: string; type: 'success' | 'error' }
 
+const RISK_STYLES: Record<string, string> = {
+  RED: 'bg-red-100 text-red-700 border-red-200',
+  AMBER: 'bg-amber-100 text-amber-700 border-amber-200',
+  GREEN: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+}
+
+const STATUS_STYLES: Record<string, string> = {
+  approved: 'bg-emerald-100 text-emerald-700',
+  rejected: 'bg-red-100 text-red-700',
+  need_changes: 'bg-amber-100 text-amber-700',
+  ai_flagged: 'bg-blue-100 text-blue-700',
+}
+
 export default function ClauseCard({ clause, onUpdated }: Props) {
   const { canModify, hasRole } = useAuth()
   const [expanded, setExpanded] = useState(false)
   const [modifying, setModifying] = useState(false)
-  const [modifiedText, setModifiedText] = useState(clause.suggested_fix ?? clause.raw_text)
+  const [lawyerRec, setLawyerRec] = useState('')
+  const [lawyerEmail, setLawyerEmail] = useState('')
+  const [acceptAI, setAcceptAI] = useState(false)
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
 
@@ -28,7 +42,7 @@ export default function ClauseCard({ clause, onUpdated }: Props) {
     setLoading(true)
     try {
       await clausesApi.approve(clause.clause_id)
-      showToast('Clause approved successfully.', 'success')
+      showToast('Clause approved.', 'success')
       onUpdated?.()
     } catch {
       showToast('Failed to approve clause.', 'error')
@@ -51,14 +65,26 @@ export default function ClauseCard({ clause, onUpdated }: Props) {
   }
 
   const handleModify = async () => {
+    if (!acceptAI && !lawyerRec.trim()) {
+      showToast('Enter your recommendation or accept the AI suggestion.', 'error')
+      return
+    }
+    if (!lawyerEmail.trim()) {
+      showToast('Email is required.', 'error')
+      return
+    }
     setLoading(true)
     try {
-      await clausesApi.modify(clause.clause_id, modifiedText)
-      showToast('Clause modified successfully.', 'success')
+      await clausesApi.modify(clause.clause_id, {
+        lawyer_recommendation: lawyerRec,
+        lawyer_mail_id: lawyerEmail,
+        accept_ai_recommendation: acceptAI,
+      })
+      showToast('Changes submitted.', 'success')
       setModifying(false)
       onUpdated?.()
     } catch {
-      showToast('Failed to modify clause.', 'error')
+      showToast('Failed to submit changes.', 'error')
     } finally {
       setLoading(false)
     }
@@ -77,68 +103,138 @@ export default function ClauseCard({ clause, onUpdated }: Props) {
     }
   }
 
+  const isDecided = ['approved', 'rejected', 'need_changes'].includes(clause.status ?? '')
+  const isAiFlagged = clause.status === 'ai_flagged'
   const truncatedText = clause.raw_text.length > 300
     ? clause.raw_text.slice(0, 300) + '…'
     : clause.raw_text
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3 relative">
+    <div className="premium-card premium-card-hover p-4 space-y-3 relative soft-appear">
       {toast && (
         <div className={`absolute top-2 right-2 z-10 text-xs px-3 py-1.5 rounded-full font-medium shadow ${
-          toast.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+          toast.type === 'success' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
         }`}>
           {toast.message}
         </div>
       )}
 
+      {/* Header */}
       <div className="flex items-start justify-between gap-2">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-100 px-2 py-0.5 rounded">
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide bg-slate-100 px-2 py-0.5 rounded">
           {clause.clause_type}
         </span>
-        <RiskBadge level={clause.risk_level} />
+        {clause.risk_category && (
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${RISK_STYLES[clause.risk_category] ?? ''}`}>
+            {clause.risk_category}
+          </span>
+        )}
       </div>
 
+      {/* Raw text */}
       <div>
-        <p className="text-sm text-gray-700 leading-relaxed">
+        <p className="text-sm text-slate-700 leading-relaxed">
           {expanded ? clause.raw_text : truncatedText}
         </p>
         {clause.raw_text.length > 300 && (
           <button
             onClick={() => setExpanded(!expanded)}
-            className="text-xs text-indigo-600 hover:underline mt-1"
+            className="text-xs text-teal-700 hover:underline mt-1 font-semibold"
           >
             {expanded ? 'Show less' : 'Show more'}
           </button>
         )}
       </div>
 
-      {clause.recommendation && (
-        <div className="bg-blue-50 border border-blue-100 rounded-md px-3 py-2 text-xs text-blue-800">
-          <span className="font-semibold">Recommendation: </span>
-          {clause.recommendation}
+      {/* Legal intent */}
+      {clause.legal_intent && (
+        <div className="bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-700">
+          <span className="font-semibold text-slate-500 uppercase tracking-wide">Intent: </span>
+          {clause.legal_intent}
         </div>
       )}
 
+      {/* Gap summary */}
+      {clause.gap_summary && (
+        <div className="bg-amber-50 border border-amber-100 rounded-md px-3 py-2 text-xs text-amber-900">
+          <span className="font-semibold">Gap from Gold Standard: </span>
+          {clause.gap_summary}
+        </div>
+      )}
+
+      {/* Violation */}
+      {clause.violation_message && (
+        <div className="bg-red-50 border border-red-100 rounded-md px-3 py-2 text-xs text-red-800">
+          <span className="font-semibold">Policy Violation: </span>
+          {clause.violation_message}
+        </div>
+      )}
+
+      {/* Precedent */}
+      {clause.precedent && (
+        <div className="bg-indigo-50 border border-indigo-100 rounded-md px-3 py-2 text-xs text-indigo-800">
+          <span className="font-semibold">Precedent: </span>
+          Accepted for <strong>{clause.precedent.party}</strong> on {clause.precedent.date}
+        </div>
+      )}
+
+      {/* AI Recommendation */}
+      {clause.ai_recommendation && (
+        <div className="bg-teal-50 border border-teal-100 rounded-md px-3 py-2 text-xs text-teal-900 whitespace-pre-line">
+          <span className="font-semibold">AI Recommendation: </span>
+          {clause.ai_recommendation}
+        </div>
+      )}
+
+      {/* Modify form */}
       {modifying && (
-        <div className="space-y-2">
-          <label className="text-xs font-medium text-gray-600">Modified text</label>
-          <textarea
-            value={modifiedText}
-            onChange={(e) => setModifiedText(e.target.value)}
-            rows={5}
-            className="w-full border border-gray-300 rounded-md text-sm p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
-          />
+        <div className="space-y-3 pt-2 border-t border-slate-100">
+          {clause.ai_recommendation && (
+            <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={acceptAI}
+                onChange={(e) => setAcceptAI(e.target.checked)}
+                className="rounded"
+              />
+              Accept AI recommendation as-is
+            </label>
+          )}
+          {!acceptAI && (
+            <>
+              <div>
+                <label className="text-xs font-medium text-slate-600 block mb-1">Your recommendation</label>
+                <textarea
+                  value={lawyerRec}
+                  onChange={(e) => setLawyerRec(e.target.value)}
+                  rows={4}
+                  className="field resize-y w-full"
+                  placeholder="Write your recommended changes..."
+                />
+              </div>
+            </>
+          )}
+          <div>
+            <label className="text-xs font-medium text-slate-600 block mb-1">Your email</label>
+            <input
+              type="email"
+              value={lawyerEmail}
+              onChange={(e) => setLawyerEmail(e.target.value)}
+              className="field w-full"
+              placeholder="you@firm.com"
+            />
+          </div>
           <div className="flex gap-2">
             <button
               onClick={handleModify}
               disabled={loading}
-              className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              className="btn-primary px-3 py-1.5 text-xs"
             >
-              Save Changes
+              Submit
             </button>
             <button
               onClick={() => setModifying(false)}
-              className="text-xs text-gray-600 px-3 py-1.5 rounded-md hover:bg-gray-100 transition-colors"
+              className="text-xs text-slate-600 px-3 py-1.5 rounded-md hover:bg-slate-100 transition-colors"
             >
               Cancel
             </button>
@@ -146,12 +242,13 @@ export default function ClauseCard({ clause, onUpdated }: Props) {
         </div>
       )}
 
-      {canModify && !modifying && (
+      {/* Action buttons */}
+      {canModify && !modifying && (!isDecided || isAiFlagged) && (
         <div className="flex gap-2 pt-1">
           <button
             onClick={handleApprove}
             disabled={loading}
-            className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+            className="text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors"
           >
             Approve
           </button>
@@ -165,15 +262,23 @@ export default function ClauseCard({ clause, onUpdated }: Props) {
           <button
             onClick={() => setModifying(true)}
             disabled={loading}
-            className="text-xs border border-gray-300 text-gray-700 px-3 py-1.5 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="text-xs border border-slate-300 text-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-colors"
           >
-            Modify
+            Request Changes
           </button>
         </div>
       )}
 
+      {/* Status badge */}
+      {isDecided && (
+        <div className={`text-xs font-medium px-2 py-1 rounded-md inline-block ${STATUS_STYLES[clause.status!] ?? ''}`}>
+          {clause.status === 'need_changes' ? 'Changes Requested' : clause.status!.charAt(0).toUpperCase() + clause.status!.slice(1)}
+        </div>
+      )}
+
+      {/* Admin delete */}
       {hasRole('admin') && (
-        <div className="mt-2 pt-2 border-t border-gray-100">
+        <div className="mt-2 pt-2 border-t border-slate-100">
           <button
             onClick={handleDelete}
             disabled={loading}
@@ -184,7 +289,8 @@ export default function ClauseCard({ clause, onUpdated }: Props) {
         </div>
       )}
 
-      <div className="flex items-center justify-between text-xs text-gray-400 pt-1 border-t border-gray-100">
+      {/* Footer */}
+      <div className="flex items-center justify-between text-xs text-slate-400 pt-1 border-t border-slate-100">
         <span>Pages {clause.start_page}–{clause.end_page}</span>
         <span>Confidence: {(clause.confidence * 100).toFixed(0)}%</span>
       </div>

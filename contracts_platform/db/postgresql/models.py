@@ -14,9 +14,10 @@ class PlaybookRule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     clause_type: Mapped[str] = mapped_column(String, nullable=False)
     jurisdiction: Mapped[str] = mapped_column(String, nullable=False)
-    rule_type: Mapped[str] = mapped_column(String, nullable=False)  # REQUIRED / FORBIDDEN / CONDITIONAL
+    rule_type: Mapped[str] = mapped_column(String, nullable=False)  # REQUIRED / FORBIDDEN
     description: Mapped[str] = mapped_column(String, nullable=False)
     weight: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    violation_message: Mapped[str | None] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

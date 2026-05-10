@@ -1,62 +1,95 @@
 from __future__ import annotations
 
-import structlog
-from opentelemetry import trace
+from openai import AsyncOpenAI
 
+from contracts_platform.core.config import settings
+from contracts_platform.core.logging import logger
 from contracts_platform.orchestration.state import ContractReviewState
-from contracts_platform.pipeline.recommendation import wording_retriever, generator
 
-logger = structlog.get_logger(__name__)
-tracer = trace.get_tracer(__name__)
+_SYSTEM_PROMPT = (
+    "You are a senior legal counsel writing a recommendation for a junior lawyer. "
+    "You will receive:\n"
+    "1. The legal intent of the clause submitted by the counterparty.\n"
+    "2. The gap between their clause and our Gold Standard.\n"
+    "3. A precedent note (if we have accepted a similar clause before).\n"
+    "4. Any policy violations from our playbook.\n\n"
+    "Write a concise recommendation (3-5 sentences) that:\n"
+    "- Explains what is wrong with the clause\n"
+    "- References the precedent if one exists\n"
+    "- Proposes a specific counter-edit with exact legal wording\n\n"
+    "End with a section labelled 'Proposed Counter:' containing the exact replacement wording."
+)
 
 
 async def recommendation_node(state: ContractReviewState) -> dict:
-    """Generate a recommendation and suggested fix for a non-GREEN clause."""
+    """
+    Step 5: Generate AI recommendation using all context from previous nodes.
+    Combines: legal_intent + gap_summary + precedent + violation_message
+    → writes a lawyer-ready recommendation with a proposed counter-edit.
+    """
     contract_id = state["contract_id"]
     clause_id = state["clause_id"]
-    clause_type = state["clause_type"]
-    clause_text = state["clause_text"]
-    risk_indicators = state.get("risk_indicators") or []
-    tenant_id = state["tenant_id"]
 
-    with tracer.start_as_current_span("recommendation_node") as span:
-        span.set_attribute("contract_id", contract_id)
-        span.set_attribute("clause_id", clause_id)
-        span.set_attribute("clause_type", clause_type)
+    legal_intent = state.get("legal_intent") or "Not available"
+    gap_summary = state.get("gap_summary") or "Not available"
+    violation_message = state.get("violation_message") or "No policy violations detected"
+    precedent = state.get("precedent")
 
-        try:
-            accepted_examples = await wording_retriever.retrieve_accepted_wording(
-                tenant_id, clause_type, clause_text
-            )
+    if precedent:
+        precedent_note = (
+            f"Precedent: We previously accepted a similar clause for "
+            f"{precedent.get('party')} on {precedent.get('date')} "
+            f"(Contract ID: {precedent.get('contract_id')})."
+        )
+    else:
+        precedent_note = "Precedent: No prior acceptance of this clause type found."
 
-            result = await generator.generate_recommendation(
-                clause_text, clause_type, risk_indicators, accepted_examples
-            )
+    logger.info(
+        "recommendation_node.start",
+        contract_id=contract_id,
+        clause_id=clause_id,
+    )
 
-            recommendation: str = result.get("recommendation", "")
-            suggested_fix: str | None = result.get("suggested_fix")
+    try:
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-            logger.info(
-                "recommendation_node.success",
-                contract_id=contract_id,
-                clause_id=clause_id,
-            )
+        user_message = (
+            f"Legal Intent: {legal_intent}\n\n"
+            f"Gap from Gold Standard: {gap_summary}\n\n"
+            f"Policy Violations: {violation_message}\n\n"
+            f"{precedent_note}"
+        )
 
-            return {
-                "recommendation": recommendation,
-                "suggested_fix": suggested_fix,
-            }
+        response = await client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=500,
+            temperature=0.2,
+        )
 
-        except Exception as exc:
-            logger.error(
-                "recommendation_node.error",
-                contract_id=contract_id,
-                clause_id=clause_id,
-                error=str(exc),
-                exc_info=True,
-            )
-            span.record_exception(exc)
-            return {
-                "recommendation": "Unable to generate recommendation.",
-                "suggested_fix": None,
-            }
+        ai_recommendation = (response.choices[0].message.content or "").strip()
+
+        logger.info(
+            "recommendation_node.complete",
+            contract_id=contract_id,
+            clause_id=clause_id,
+        )
+
+        return {"ai_recommendation": ai_recommendation}
+
+    except Exception as exc:
+        logger.error(
+            "recommendation_node.failed",
+            contract_id=contract_id,
+            clause_id=clause_id,
+            error=str(exc),
+        )
+        failed_sources = list(state.get("failed_sources") or [])
+        failed_sources.append("recommendation")
+        return {
+            "ai_recommendation": "Unable to generate recommendation. Please review manually.",
+            "failed_sources": failed_sources,
+        }

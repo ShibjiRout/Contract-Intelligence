@@ -36,6 +36,15 @@ async def extract_text(file_bytes: bytes, filename: str) -> str:
     return full_text
 
 
+async def extract_markdown(file_bytes: bytes, filename: str) -> str:
+    """
+    Return the full document as Azure-generated markdown.
+    Section headings are prefixed with '#' / '##' automatically by Azure DI.
+    Used by playbook ingestion for heading-based chunk splitting.
+    """
+    return await azure_ocr_provider.analyze_document_markdown(file_bytes, filename)
+
+
 async def extract_pages(file_bytes: bytes, filename: str) -> list[dict]:
     """Returns per-page OCR output: [{page_num, text, confidence, tables}, ...]"""
     pages = await azure_ocr_provider.analyze_document(file_bytes, filename)

@@ -1,128 +1,129 @@
+from __future__ import annotations
+
 from langgraph.graph import END, START, StateGraph
 
+from contracts_platform.core.constants import ContractStatus
 from contracts_platform.core.logging import logger
 from contracts_platform.db.mongodb.client import get_database
-from contracts_platform.orchestration.nodes.explainability_node import explainability_node
-from contracts_platform.orchestration.nodes.graph_check_node import graph_check_node
-from contracts_platform.orchestration.nodes.playbook_check_node import playbook_check_node
+from contracts_platform.db.mongodb.repositories import contract_repo
+from contracts_platform.orchestration.nodes.intent_extraction_node import intent_extraction_node
+from contracts_platform.orchestration.nodes.gap_analysis_node import gap_analysis_node
+from contracts_platform.orchestration.nodes.precedent_check_node import precedent_check_node
+from contracts_platform.orchestration.nodes.playbook_score_node import playbook_score_node
 from contracts_platform.orchestration.nodes.recommendation_node import recommendation_node
-from contracts_platform.orchestration.nodes.risk_aggregator_node import risk_aggregator_node
-from contracts_platform.orchestration.nodes.vector_check_node import vector_check_node
 from contracts_platform.orchestration.state import ContractReviewState
-
-
-def _should_recommend(state: ContractReviewState) -> str:
-    """Route to recommendation only when risk is AMBER or RED."""
-    return "recommend" if state["risk_level"] != "GREEN" else "explain"
 
 
 def build_graph() -> StateGraph:
     """
-    Construct the LangGraph StateGraph for contract clause review.
+    Sequential LangGraph pipeline for a single risky clause:
 
-    Topology:
-      START -> [playbook_check, vector_check, graph_check]  (parallel fan-out)
-            -> risk_aggregator
-            -> recommendation (AMBER/RED) or directly -> explainability (GREEN)
-            -> explainability -> END
+    START
+      → intent_extraction   (LLM: what is this clause trying to do?)
+      → gap_analysis        (LLM + Qdrant: how does it differ from Gold Standard?)
+      → precedent_check     (Neo4j: have we accepted this before? for who?)
+      → playbook_score      (PostgreSQL: does it violate our rules? RED/AMBER?)
+      → recommendation      (LLM: write the AI recommendation using all context)
+      → END
     """
     graph = StateGraph(ContractReviewState)
 
-    graph.add_node("playbook_check", playbook_check_node)
-    graph.add_node("vector_check", vector_check_node)
-    graph.add_node("graph_check", graph_check_node)
-    graph.add_node("risk_aggregator", risk_aggregator_node)
+    graph.add_node("intent_extraction", intent_extraction_node)
+    graph.add_node("gap_analysis", gap_analysis_node)
+    graph.add_node("precedent_check", precedent_check_node)
+    graph.add_node("playbook_score", playbook_score_node)
     graph.add_node("recommendation", recommendation_node)
-    graph.add_node("explainability", explainability_node)
 
-    # True parallel fan-out from START to all three check nodes
-    graph.add_edge(START, "playbook_check")
-    graph.add_edge(START, "vector_check")
-    graph.add_edge(START, "graph_check")
-
-    # All three converge into risk_aggregator
-    graph.add_edge("playbook_check", "risk_aggregator")
-    graph.add_edge("vector_check", "risk_aggregator")
-    graph.add_edge("graph_check", "risk_aggregator")
-
-    # Conditional: skip recommendation for GREEN risk
-    graph.add_conditional_edges(
-        "risk_aggregator",
-        _should_recommend,
-        {
-            "recommend": "recommendation",
-            "explain": "explainability",
-        },
-    )
-
-    graph.add_edge("recommendation", "explainability")
-    graph.add_edge("explainability", END)
+    graph.add_edge(START, "intent_extraction")
+    graph.add_edge("intent_extraction", "gap_analysis")
+    graph.add_edge("gap_analysis", "precedent_check")
+    graph.add_edge("precedent_check", "playbook_score")
+    graph.add_edge("playbook_score", "recommendation")
+    graph.add_edge("recommendation", END)
 
     return graph
 
 
-async def run_review_graph(contract_id: str) -> dict:
+async def run_review_graph(contract_id: str, clause_id: str) -> dict:
     """
-    Entry point called by review_orchestration_task.
-    Loads all clauses for the contract from MongoDB, runs the compiled LangGraph
-    for each clause, and persists risk results back to MongoDB.
+    Entry point called by review_orchestration_task for a single risky clause.
+    Runs the full sequential pipeline and saves results back to MongoDB.
+    After all risky clauses are processed, sets contract status to REVIEW_READY.
     """
-    logger.info("langgraph.run", contract_id=contract_id)
+    logger.info("langgraph.run", contract_id=contract_id, clause_id=clause_id)
 
     db = await get_database()
 
-    clauses = await db["clauses"].find({"contract_id": contract_id}).to_list(None)
+    clause = await db["clauses"].find_one({"clause_id": clause_id})
     contract = await db["contracts"].find_one({"contract_id": contract_id})
 
-    tenant_id: str = (contract or {}).get("tenant_id", "")
+    if not clause or not contract:
+        logger.error(
+            "langgraph.clause_not_found",
+            contract_id=contract_id,
+            clause_id=clause_id,
+        )
+        return {}
+
+    tenant_id: str = contract.get("tenant_id", "")
+    jurisdiction: str = contract.get("jurisdiction", "UK")
 
     compiled_graph = build_graph().compile()
 
-    results = []
-    for clause in clauses:
-        state: ContractReviewState = {
-            "contract_id": contract_id,
-            "clause_id": str(clause.get("clause_id", clause.get("_id", ""))),
-            "clause_type": clause.get("clause_type", ""),
-            "clause_text": clause.get("clause_text", ""),
-            "jurisdiction": clause.get("jurisdiction", contract.get("jurisdiction", "") if contract else ""),
-            "tenant_id": tenant_id,
-            "playbook_result": None,
-            "vector_result": None,
-            "graph_result": None,
-            "risk_level": "GREEN",
-            "risk_score": 0.0,
-            "degraded_mode": False,
-            "failed_sources": [],
-            "missing_clauses": [],
-            "recommendation": None,
-            "suggested_fix": None,
-            "explanation": None,
-            "messages": [],
-        }
+    state: ContractReviewState = {
+        "contract_id": contract_id,
+        "clause_id": clause_id,
+        "clause_type": clause.get("clause_type", ""),
+        "clause_text": clause.get("raw_text", ""),
+        "jurisdiction": jurisdiction,
+        "tenant_id": tenant_id,
+        "legal_intent": None,
+        "gap_summary": None,
+        "precedent": None,
+        "risk_category": "GREEN",
+        "violation_message": None,
+        "ai_recommendation": None,
+        "failed_sources": [],
+        "messages": [],
+    }
 
-        final_state = await compiled_graph.ainvoke(state)
+    final_state = await compiled_graph.ainvoke(state)
 
-        await db["clauses"].update_one(
-            {"_id": clause["_id"]},
-            {
-                "$set": {
-                    "risk_level": final_state.get("risk_level"),
-                    "risk_score": final_state.get("risk_score"),
-                    "playbook_result": final_state.get("playbook_result"),
-                    "vector_result": final_state.get("vector_result"),
-                    "graph_result": final_state.get("graph_result"),
-                    "degraded_mode": final_state.get("degraded_mode"),
-                }
-            },
+    # Save all results back to MongoDB clause document
+    await db["clauses"].update_one(
+        {"clause_id": clause_id},
+        {
+            "$set": {
+                "legal_intent": final_state.get("legal_intent"),
+                "gap_summary": final_state.get("gap_summary"),
+                "precedent": final_state.get("precedent"),
+                "risk_category": final_state.get("risk_category", "GREEN"),
+                "violation_message": final_state.get("violation_message"),
+                "ai_recommendation": final_state.get("ai_recommendation"),
+                "status": "ai_flagged",
+            }
+        },
+    )
+
+    logger.info(
+        "langgraph.clause_processed",
+        contract_id=contract_id,
+        clause_id=clause_id,
+        risk_category=final_state.get("risk_category"),
+    )
+
+    # Check if all risky clauses are now processed
+    # A clause is "processed" if it has ai_recommendation set or status is approved
+    total = await db["clauses"].count_documents({"contract_id": contract_id})
+    processed = await db["clauses"].count_documents({
+        "contract_id": contract_id,
+        "status": {"$in": ["approved", "ai_flagged"]},
+    })
+
+    if processed >= total and total > 0:
+        await contract_repo.update_status(
+            db, contract_id, ContractStatus.REVIEW_READY, stage="orchestration"
         )
+        logger.info("langgraph.contract_review_ready", contract_id=contract_id)
 
-        results.append(final_state)
-        logger.info(
-            "langgraph.clause_processed",
-            contract_id=contract_id,
-            clause_id=state["clause_id"],
-            risk_level=final_state.get("risk_level"),
-        )
-
-    return {"contract_id": contract_id, "clauses_processed": len(results)}
+    return final_state

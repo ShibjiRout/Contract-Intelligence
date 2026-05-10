@@ -9,37 +9,72 @@ def _collection(tenant_id: str) -> str:
     return f"clauses_{tenant_id}"
 
 
-async def upsert_clause(tenant_id: str, clause_id: str, vector: list[float], payload: dict) -> None:
+async def _ensure_collection(client, collection_name: str, vector_size: int = 1536) -> None:
+    from qdrant_client.models import VectorParams, Distance, PayloadSchemaType
+    from qdrant_client.http.exceptions import UnexpectedResponse
+    try:
+        await client.get_collection(collection_name)
+    except UnexpectedResponse:
+        await client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+        )
+        await client.create_payload_index(collection_name, "clause_type", PayloadSchemaType.KEYWORD)
+        await client.create_payload_index(collection_name, "status", PayloadSchemaType.KEYWORD)
+        logger.info("qdrant.collection.created", collection=collection_name)
+
+
+async def upsert_clause(tenant_id: str, clause_id: str | int, vector: list[float], payload: dict) -> None:
     client = get_qdrant_client()
+    coll = _collection(tenant_id)
+    await _ensure_collection(client, coll, vector_size=len(vector))
     await client.upsert(
-        collection_name=_collection(tenant_id),
+        collection_name=coll,
         points=[PointStruct(id=clause_id, vector=vector, payload=payload)],
     )
     logger.info("qdrant.upsert", clause_id=clause_id, tenant_id=tenant_id)
 
 
 async def search_similar(tenant_id: str, vector: list[float], clause_type: str, status: str = "accepted", limit: int = 3) -> list[dict]:
+    from qdrant_client.http.exceptions import UnexpectedResponse
     client = get_qdrant_client()
-    results = await client.search(
-        collection_name=_collection(tenant_id),
-        query_vector=vector,
-        query_filter=Filter(must=[
-            FieldCondition(key="clause_type", match=MatchValue(value=clause_type)),
-            FieldCondition(key="status", match=MatchValue(value=status)),
-        ]),
-        limit=limit,
-        with_payload=True,
-    )
-    return [{"score": r.score, "payload": r.payload} for r in results]
+    try:
+        response = await client.query_points(
+            collection_name=_collection(tenant_id),
+            query=vector,
+            query_filter=Filter(must=[
+                FieldCondition(key="clause_type", match=MatchValue(value=clause_type)),
+                FieldCondition(key="status", match=MatchValue(value=status)),
+            ]),
+            limit=limit,
+            with_payload=True,
+        )
+        return [{"score": r.score, "payload": r.payload} for r in response.points]
+    except UnexpectedResponse as e:
+        if e.status_code == 404:
+            return []
+        raise
 
 
-async def delete_clause(tenant_id: str, clause_id: str) -> None:
+async def delete_clause(tenant_id: str, clause_id: str | int) -> None:
     client = get_qdrant_client()
     await client.delete(
         collection_name=_collection(tenant_id),
         points_selector=qdrant_models.PointIdsList(points=[clause_id]),
     )
     logger.info("qdrant.delete", clause_id=clause_id, tenant_id=tenant_id)
+
+
+async def delete_clauses(tenant_id: str, clause_ids: list[str]) -> None:
+    """Delete contract clause vectors from the tenant collection."""
+    if not clause_ids:
+        return
+    client = get_qdrant_client()
+    await client.delete(
+        collection_name=_collection(tenant_id),
+        points_selector=qdrant_models.PointIdsList(points=clause_ids),
+    )
+    logger.info("qdrant.delete_many", count=len(clause_ids), tenant_id=tenant_id)
 
 
 async def create_temp_collection(collection_name: str, vector_size: int = 1536) -> None:
@@ -65,12 +100,13 @@ async def upsert_chunk(collection_name: str, chunk_id: str, vector: list[float],
 async def search_collection(collection_name: str, vector: list[float], limit: int = 5) -> list[dict]:
     """Vector search in any collection (not tenant-scoped)."""
     client = get_qdrant_client()
-    results = await client.search(
+    response = await client.query_points(
         collection_name=collection_name,
-        query_vector=vector,
+        query=vector,
         limit=limit,
+        with_payload=True,
     )
-    return [{"score": r.score, "payload": r.payload} for r in results]
+    return [{"score": r.score, "payload": r.payload} for r in response.points]
 
 
 async def delete_temp_collection(collection_name: str) -> None:

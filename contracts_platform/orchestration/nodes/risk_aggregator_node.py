@@ -2,7 +2,7 @@ from contracts_platform.core.logging import logger
 from contracts_platform.orchestration.scoring import risk_calculator, weights as weights_module
 from contracts_platform.orchestration.state import ContractReviewState
 
-_DEGRADED_DEFAULT_SCORE = 0.5
+_DEGRADED_DEFAULT_SCORE = 0.0
 
 
 async def risk_aggregator_node(state: ContractReviewState) -> dict:
@@ -25,9 +25,9 @@ async def risk_aggregator_node(state: ContractReviewState) -> dict:
     )
 
     try:
-        from contracts_platform.db.postgresql.client import AsyncSessionLocal
+        from contracts_platform.db.postgresql.client import get_fresh_session_factory
 
-        async with AsyncSessionLocal() as session:
+        async with get_fresh_session_factory()() as session:
             current_weights = await weights_module.get_weights(jurisdiction, session)
     except Exception as exc:
         logger.warning(
@@ -56,6 +56,7 @@ async def risk_aggregator_node(state: ContractReviewState) -> dict:
         vector_score=vector_score,
         graph_score=graph_score,
         weights=current_weights,
+        playbook_findings=playbook_result.get("findings", []) if playbook_result else [],
     )
 
     logger.info(

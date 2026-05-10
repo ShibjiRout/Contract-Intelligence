@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import Sidebar from '../components/layout/Sidebar'
 import TopBar from '../components/layout/TopBar'
 import { useAuth } from '../hooks/useAuth'
 import { adminApi } from '../api/admin'
+import { usersApi } from '../api/users'
 import type { ClearPlaybookDataResponse } from '../api/admin'
+import type { UserCreate } from '../api/users'
 import type { PlaybookRule, PlaybookRuleCreate } from '../types'
 
 const CLAUSE_TYPES = [
@@ -23,7 +26,7 @@ const CLAUSE_TYPES = [
 ]
 
 const JURISDICTIONS = ['UK', 'US', 'UAE']
-const RULE_TYPES = ['REQUIRED', 'FORBIDDEN', 'CONDITIONAL'] as const
+const RULE_TYPES = ['REQUIRED', 'FORBIDDEN'] as const
 
 const emptyForm = (): PlaybookRuleCreate => ({
   clause_type: CLAUSE_TYPES[0],
@@ -36,8 +39,7 @@ const emptyForm = (): PlaybookRuleCreate => ({
 export default function AdminPage() {
   const { hasRole } = useAuth()
 
-  const [rules, setRules] = useState<PlaybookRule[]>([])
-  const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<'rules' | 'users'>('rules')
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
@@ -50,32 +52,47 @@ export default function AdminPage() {
   const [form, setForm] = useState<PlaybookRuleCreate>(emptyForm())
   const [formError, setFormError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [editingRuleId, setEditingRuleId] = useState<number | null>(null)
+  const [editRule, setEditRule] = useState<Partial<PlaybookRuleCreate & { is_active: boolean }>>({})
+  const [userForm, setUserForm] = useState<UserCreate>({
+    email: '',
+    password: '',
+    role: 'junior_lawyer',
+    tenant_id: 'tenant_abc',
+  })
+  const [userSaving, setUserSaving] = useState(false)
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null)
 
-  if (!hasRole('admin')) {
-    return <Navigate to="/dashboard" replace />
-  }
+  const {
+    data: rules = [],
+    isLoading: loading,
+    isError: rulesLoadError,
+    refetch: refetchRules,
+  } = useQuery({
+    queryKey: ['admin-playbook-rules', jurisdictionFilter],
+    queryFn: () => adminApi.listRules(jurisdictionFilter || undefined),
+    enabled: hasRole('admin'),
+  })
+
+  const {
+    data: users = [],
+    isLoading: usersLoading,
+    isError: usersLoadError,
+    refetch: refetchUsers,
+  } = useQuery({
+    queryKey: ['admin-users'],
+    queryFn: () => usersApi.list(),
+    enabled: hasRole('admin'),
+  })
 
   const showToast = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(null), 3000)
   }
 
-  const loadRules = async (jurisdiction?: string) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await adminApi.listRules(jurisdiction || undefined)
-      setRules(data)
-    } catch {
-      setError('Failed to load playbook rules. Please try again.')
-    } finally {
-      setLoading(false)
-    }
+  if (!hasRole('admin')) {
+    return <Navigate to="/dashboard" replace />
   }
-
-  useEffect(() => {
-    loadRules(jurisdictionFilter)
-  }, [jurisdictionFilter])
 
   const handleClearPlaybook = async () => {
     setClearing(true)
@@ -85,7 +102,7 @@ export default function AdminPage() {
       setClearResult(result)
       showToast(`Cleared ${result.postgres_rules_deleted} rules from all databases.`)
       setShowClearConfirm(false)
-      loadRules(jurisdictionFilter)
+      refetchRules()
     } catch {
       setError('Failed to clear playbook data. Please try again.')
       setShowClearConfirm(false)
@@ -98,9 +115,66 @@ export default function AdminPage() {
     try {
       await adminApi.deleteRule(id)
       showToast('Rule deleted successfully.')
-      loadRules(jurisdictionFilter)
+      refetchRules()
     } catch {
       setError('Failed to disable rule.')
+    }
+  }
+
+  const startEditingRule = (rule: PlaybookRule) => {
+    setEditingRuleId(rule.id)
+    setEditRule({
+      description: rule.description,
+      weight: rule.weight,
+      is_active: rule.is_active,
+    })
+  }
+
+  const handleRuleUpdate = async (id: number) => {
+    try {
+      await adminApi.updateRule(id, editRule)
+      showToast('Rule updated successfully.')
+      setEditingRuleId(null)
+      setEditRule({})
+      refetchRules()
+    } catch {
+      setError('Failed to update rule.')
+    }
+  }
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setUserSaving(true)
+    try {
+      await usersApi.create(userForm)
+      showToast('User created successfully.')
+      setUserForm({
+        email: '',
+        password: '',
+        role: 'junior_lawyer',
+        tenant_id: userForm.tenant_id,
+      })
+      refetchUsers()
+    } catch {
+      setError('Failed to create user.')
+    } finally {
+      setUserSaving(false)
+    }
+  }
+
+  const handleUserUpdate = async (
+    userId: string,
+    data: { role?: string; is_active?: boolean }
+  ) => {
+    setUpdatingUserId(userId)
+    try {
+      await usersApi.update(userId, data)
+      showToast('User updated successfully.')
+      refetchUsers()
+    } catch {
+      setError('Failed to update user.')
+    } finally {
+      setUpdatingUserId(null)
     }
   }
 
@@ -122,7 +196,7 @@ export default function AdminPage() {
     try {
       const res = await adminApi.uploadPdf(file)
       showToast(`${res.data.rules_created} rule${res.data.rules_created !== 1 ? 's' : ''} extracted from PDF.`)
-      loadRules(jurisdictionFilter)
+      refetchRules()
     } catch {
       setError('Failed to extract rules from PDF. Please try again.')
     } finally {
@@ -147,7 +221,7 @@ export default function AdminPage() {
       showToast('Rule created successfully.')
       setShowForm(false)
       setForm(emptyForm())
-      loadRules(jurisdictionFilter)
+      refetchRules()
     } catch {
       setFormError('Failed to create rule. Please try again.')
     } finally {
@@ -159,7 +233,6 @@ export default function AdminPage() {
     const styles: Record<string, string> = {
       REQUIRED: 'bg-green-100 text-green-700',
       FORBIDDEN: 'bg-red-100 text-red-700',
-      CONDITIONAL: 'bg-yellow-100 text-yellow-700',
     }
     return (
       <span
@@ -171,12 +244,12 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="app-shell">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="workspace">
         <TopBar />
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-6xl mx-auto space-y-6">
+        <main className="premium-main">
+          <div className="max-w-6xl mx-auto space-y-6 soft-appear">
 
             {/* Toast */}
             {toast && (
@@ -188,14 +261,15 @@ export default function AdminPage() {
             {/* Header */}
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-xl font-semibold text-gray-900">Playbook Rules</h1>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  Manage jurisdiction-specific clause requirements
+                <h1 className="text-2xl font-bold tracking-tight text-slate-950">Admin</h1>
+                <p className="text-sm text-slate-500 mt-1">
+                  Manage playbook rules and users
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              {activeTab === 'rules' && (
+                <div className="flex items-center gap-2">
                 <label
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 border border-indigo-300 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer ${pdfUploading ? 'opacity-50 pointer-events-none' : ''}`}
+                  className={`btn-secondary cursor-pointer ${pdfUploading ? 'opacity-50 pointer-events-none' : ''}`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -211,20 +285,46 @@ export default function AdminPage() {
                 </label>
                 <button
                   onClick={() => { setShowForm(true); setFormError(null) }}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                  className="btn-primary"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
                   Add Rule
                 </button>
-              </div>
+                </div>
+              )}
             </div>
 
+            <div className="flex items-center gap-2 border-b border-slate-200">
+              <button
+                onClick={() => setActiveTab('rules')}
+                className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'rules'
+                    ? 'border-amber-600 text-slate-950'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Playbook Rules
+              </button>
+              <button
+                onClick={() => setActiveTab('users')}
+                className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'users'
+                    ? 'border-amber-600 text-slate-950'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Users
+              </button>
+            </div>
+
+            {activeTab === 'rules' && (
+              <>
             {/* Add Rule Form */}
             {showForm && (
-              <div className="bg-white border border-indigo-200 rounded-xl p-6 shadow-sm">
-                <h2 className="text-base font-semibold text-gray-900 mb-4">New Playbook Rule</h2>
+              <div className="premium-panel p-6">
+                <h2 className="text-base font-semibold text-slate-950 mb-4">New Playbook Rule</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
@@ -354,9 +454,9 @@ export default function AdminPage() {
             </div>
 
             {/* Error banner */}
-            {error && (
+            {(error || rulesLoadError) && (
               <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">
-                {error}
+                {error ?? 'Failed to load playbook rules. Please try again.'}
               </div>
             )}
 
@@ -398,7 +498,9 @@ export default function AdminPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {rules.map((rule) => (
+                    {rules.map((rule) => {
+                      const isEditing = editingRuleId === rule.id
+                      return (
                       <tr key={rule.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-5 py-3 text-sm text-gray-900 font-medium whitespace-nowrap">
                           {rule.clause_type.replace(/_/g, ' ')}
@@ -410,13 +512,42 @@ export default function AdminPage() {
                           {ruleTypeBadge(rule.rule_type)}
                         </td>
                         <td className="px-5 py-3 text-sm text-gray-600 max-w-xs truncate">
-                          {rule.description}
+                          {isEditing ? (
+                            <input
+                              value={editRule.description ?? ''}
+                              onChange={(e) => setEditRule((prev) => ({ ...prev, description: e.target.value }))}
+                              className="w-full min-w-64 border border-gray-300 rounded px-2 py-1 text-sm"
+                            />
+                          ) : (
+                            rule.description
+                          )}
                         </td>
                         <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                          {rule.weight.toFixed(1)}
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              value={editRule.weight ?? rule.weight}
+                              onChange={(e) => setEditRule((prev) => ({ ...prev, weight: Number(e.target.value) }))}
+                              className="w-20 border border-gray-300 rounded px-2 py-1 text-sm"
+                              min={0}
+                              max={10}
+                              step={0.1}
+                            />
+                          ) : (
+                            rule.weight.toFixed(1)
+                          )}
                         </td>
                         <td className="px-5 py-3 whitespace-nowrap">
-                          {rule.is_active ? (
+                          {isEditing ? (
+                            <label className="inline-flex items-center gap-2 text-xs text-gray-600">
+                              <input
+                                type="checkbox"
+                                checked={editRule.is_active ?? rule.is_active}
+                                onChange={(e) => setEditRule((prev) => ({ ...prev, is_active: e.target.checked }))}
+                              />
+                              Active
+                            </label>
+                          ) : rule.is_active ? (
                             <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
                               <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
                               Active
@@ -428,16 +559,42 @@ export default function AdminPage() {
                             </span>
                           )}
                         </td>
-                        <td className="px-5 py-3 text-right whitespace-nowrap">
-                          <button
-                            onClick={() => handleDisable(rule.id)}
-                            className="text-xs text-red-600 hover:text-red-800 font-medium transition-colors"
-                          >
-                            Delete
-                          </button>
+                        <td className="px-5 py-3 text-right whitespace-nowrap space-x-3">
+                          {isEditing ? (
+                            <>
+                              <button
+                                onClick={() => handleRuleUpdate(rule.id)}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={() => { setEditingRuleId(null); setEditRule({}) }}
+                                className="text-xs text-gray-500 hover:text-gray-700 font-medium transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => startEditingRule(rule)}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDisable(rule.id)}
+                                className="text-xs text-red-600 hover:text-red-800 font-medium transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               )}
@@ -470,6 +627,130 @@ export default function AdminPage() {
                 </button>
               </div>
             </div>
+              </>
+            )}
+
+            {activeTab === 'users' && (
+              <div className="space-y-6">
+                <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+                  <h2 className="text-base font-semibold text-gray-900 mb-4">Create User</h2>
+                  <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
+                      <input
+                        type="email"
+                        value={userForm.email}
+                        onChange={(e) => setUserForm((prev) => ({ ...prev, email: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Password</label>
+                      <input
+                        type="password"
+                        value={userForm.password}
+                        onChange={(e) => setUserForm((prev) => ({ ...prev, password: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        minLength={8}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
+                      <select
+                        value={userForm.role}
+                        onChange={(e) => setUserForm((prev) => ({ ...prev, role: e.target.value as UserCreate['role'] }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="junior_lawyer">Junior Lawyer</option>
+                        <option value="senior_lawyer">Senior Lawyer</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Tenant</label>
+                      <input
+                        value={userForm.tenant_id}
+                        onChange={(e) => setUserForm((prev) => ({ ...prev, tenant_id: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        required
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={userSaving}
+                      className="md:col-start-5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                    >
+                      {userSaving ? 'Creating...' : 'Create User'}
+                    </button>
+                  </form>
+                </div>
+
+                {(error || usersLoadError) && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">
+                    {error ?? 'Failed to load users. Please try again.'}
+                  </div>
+                )}
+
+                <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                  {usersLoading ? (
+                    <div className="flex items-center justify-center py-16">
+                      <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                      <span className="ml-3 text-sm text-gray-500">Loading users...</span>
+                    </div>
+                  ) : users.length === 0 ? (
+                    <div className="text-center py-16 text-sm text-gray-500">No users found.</div>
+                  ) : (
+                    <table className="min-w-full divide-y divide-gray-100">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Email</th>
+                          <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Role</th>
+                          <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Tenant</th>
+                          <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
+                          <th className="px-5 py-3" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {users.map((user) => (
+                          <tr key={user.user_id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-5 py-3 text-sm text-gray-900">{user.email}</td>
+                            <td className="px-5 py-3">
+                              <select
+                                value={user.role}
+                                disabled={updatingUserId === user.user_id}
+                                onChange={(e) => handleUserUpdate(user.user_id, { role: e.target.value })}
+                                className="border border-gray-300 rounded px-2 py-1 text-xs text-gray-700"
+                              >
+                                <option value="junior_lawyer">Junior Lawyer</option>
+                                <option value="senior_lawyer">Senior Lawyer</option>
+                                <option value="admin">Admin</option>
+                              </select>
+                            </td>
+                            <td className="px-5 py-3 text-sm text-gray-600">{user.tenant_id}</td>
+                            <td className="px-5 py-3">
+                              <span className={`text-xs font-medium ${user.is_active ? 'text-green-700' : 'text-gray-400'}`}>
+                                {user.is_active ? 'Active' : 'Disabled'}
+                              </span>
+                            </td>
+                            <td className="px-5 py-3 text-right">
+                              <button
+                                onClick={() => handleUserUpdate(user.user_id, { is_active: !user.is_active })}
+                                disabled={updatingUserId === user.user_id}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50 transition-colors"
+                              >
+                                {user.is_active ? 'Disable' : 'Enable'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Confirm dialog */}
             {showClearConfirm && (

@@ -18,6 +18,18 @@ async def get_contract(db: AsyncIOMotorDatabase, contract_id: str) -> dict | Non
     return await db["contracts"].find_one({"contract_id": contract_id}, {"_id": 0})
 
 
+async def get_contract_for_tenant(
+    db: AsyncIOMotorDatabase,
+    contract_id: str,
+    tenant_id: str,
+) -> dict | None:
+    """Return the contract document when it belongs to the given tenant."""
+    return await db["contracts"].find_one(
+        {"contract_id": contract_id, "tenant_id": tenant_id},
+        {"_id": 0},
+    )
+
+
 async def update_status(
     db: AsyncIOMotorDatabase,
     contract_id: str,
@@ -78,9 +90,16 @@ async def update_final_risk(
     logger.info("contract.risk_updated", contract_id=contract_id, risk=risk.value)
 
 
-async def get_by_file_hash(db: AsyncIOMotorDatabase, file_hash: str) -> dict | None:
-    """Return the contract document matching the given file_hash, or None."""
-    return await db["contracts"].find_one({"file_hash": file_hash}, {"_id": 0})
+async def get_by_file_hash(
+    db: AsyncIOMotorDatabase,
+    file_hash: str,
+    tenant_id: str | None = None,
+) -> dict | None:
+    """Return the contract document matching the given file_hash, optionally scoped by tenant."""
+    query = {"file_hash": file_hash}
+    if tenant_id is not None:
+        query["tenant_id"] = tenant_id
+    return await db["contracts"].find_one(query, {"_id": 0})
 
 
 async def list_contracts(
@@ -96,3 +115,34 @@ async def list_contracts(
         .limit(limit)
     )
     return await cursor.to_list(length=limit)
+
+
+async def delete_contract_data(
+    db: AsyncIOMotorDatabase,
+    contract_id: str,
+    tenant_id: str,
+) -> dict[str, int]:
+    """Delete MongoDB records owned by one contract and tenant."""
+    contract_result = await db["contracts"].delete_one(
+        {"contract_id": contract_id, "tenant_id": tenant_id}
+    )
+    clauses_result = await db["clauses"].delete_many(
+        {"contract_id": contract_id, "tenant_id": tenant_id}
+    )
+    audit_result = await db["audit_summaries"].delete_many({"contract_id": contract_id})
+    cost_result = await db["cost_tracking"].delete_many({"contract_id": contract_id})
+    logger.info(
+        "contract.deleted_mongodb",
+        contract_id=contract_id,
+        tenant_id=tenant_id,
+        contracts=contract_result.deleted_count,
+        clauses=clauses_result.deleted_count,
+        audit_summaries=audit_result.deleted_count,
+        cost_entries=cost_result.deleted_count,
+    )
+    return {
+        "contracts": contract_result.deleted_count,
+        "clauses": clauses_result.deleted_count,
+        "audit_summaries": audit_result.deleted_count,
+        "cost_entries": cost_result.deleted_count,
+    }

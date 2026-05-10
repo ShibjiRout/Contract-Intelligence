@@ -41,12 +41,17 @@ def clause_extraction_task(self, contract_id: str) -> None:
             temp_name = r.get(f"temp_collection:{contract_id}") or ""
 
             clauses = await extract_clauses(contract_id, text)
-            if clauses:
-                await db["clauses"].insert_many(clauses)
 
             # Save clauses to permanent Qdrant + Neo4j
             contract_doc = await db["contracts"].find_one({"contract_id": contract_id}) or {}
             tenant_id = contract_doc.get("tenant_id", "default")
+
+            for clause in (clauses or []):
+                clause["contract_id"] = contract_id
+                clause["tenant_id"] = tenant_id
+
+            if clauses:
+                await db["clauses"].insert_many(clauses)
             try:
                 from contracts_platform.pipeline.embedder import embed_text
                 from contracts_platform.db.qdrant.repositories.clause_vector_repo import upsert_clause
@@ -69,8 +74,11 @@ def clause_extraction_task(self, contract_id: str) -> None:
                         await create_clause_node(
                             clause_id=clause["clause_id"],
                             contract_id=contract_id,
+                            tenant_id=tenant_id,
                             clause_type=clause.get("clause_type", ""),
-                            risk_level="PENDING",
+                            risk_level=clause.get("risk_level") or "PENDING",
+                            risk_score=float(clause.get("risk_score") or 0.0),
+                            status=clause.get("status") or "pending",
                         )
                     except Exception as exc:
                         logger.warning("clause_extraction_task.clause_storage_failed",
@@ -91,9 +99,9 @@ def clause_extraction_task(self, contract_id: str) -> None:
 
             publish(contract_id, "clause_extraction", 75, "clauses extracted")
 
-            from contracts_platform.workers.tasks.review_orchestration_task import review_orchestration_task
+            from contracts_platform.workers.tasks.qdrant_check_task import qdrant_check_task
 
-            review_orchestration_task.apply_async(args=[contract_id], queue="orchestration")
+            qdrant_check_task.apply_async(args=[contract_id], queue="qdrant_check")
 
         except Exception as exc:
             await contract_repo.append_error(

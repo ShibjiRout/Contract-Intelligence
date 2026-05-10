@@ -18,11 +18,12 @@ async def generate_fixes(contract_id: str) -> None:
         {"contract_id": contract_id, "risk_level": {"$in": ["AMBER", "RED"]}}
     ).to_list(None)
     for clause in clauses:
+        clause_text = clause.get("raw_text", clause.get("clause_text", ""))
         accepted = await wording_retriever.retrieve_accepted_wording(
-            clause["tenant_id"], clause["clause_type"], clause["clause_text"]
+            clause.get("tenant_id", "default"), clause["clause_type"], clause_text
         )
         result = await generator.generate_recommendation(
-            clause["clause_text"],
+            clause_text,
             clause["clause_type"],
             clause.get("risk_indicators", []),
             accepted,

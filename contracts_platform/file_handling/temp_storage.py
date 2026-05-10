@@ -59,11 +59,15 @@ async def load_temp_text(contract_id: str) -> str:
 
 
 async def delete_temp_file(contract_id: str) -> None:
-    """Delete {contract_id}.txt from Azure File Share."""
+    """Delete {contract_id}.txt from Azure File Share. 404 is treated as success (idempotent)."""
     loop = asyncio.get_event_loop()
     try:
         await loop.run_in_executor(None, partial(_delete_sync, contract_id))
         logger.info("temp_storage.delete_complete", contract_id=contract_id)
     except Exception as exc:
+        exc_str = str(exc).lower()
+        if "resourcenotfound" in exc_str or "404" in exc_str or "does not exist" in exc_str:
+            logger.info("temp_storage.delete_already_gone", contract_id=contract_id)
+            return
         logger.error("temp_storage.delete_failed", contract_id=contract_id, error=str(exc))
         raise StorageError(f"Failed to delete temp file for {contract_id}: {exc}") from exc

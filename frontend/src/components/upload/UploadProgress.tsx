@@ -26,20 +26,20 @@ export default function UploadProgress({ contractId }: Props) {
   )
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+    <div className="premium-panel p-6 space-y-4 soft-appear">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">Processing Contract</h3>
-        <span className="text-sm font-medium text-indigo-600">{progressEvent.percent}%</span>
+        <h3 className="text-sm font-semibold text-slate-950">Processing Contract</h3>
+        <span className="text-sm font-semibold text-teal-700">{progressEvent.percent}%</span>
       </div>
 
       <div className="w-full bg-gray-100 rounded-full h-2">
         <div
-          className="bg-indigo-600 h-2 rounded-full transition-all duration-500"
+          className="bg-teal-600 h-2 rounded-full transition-all duration-500"
           style={{ width: `${progressEvent.percent}%` }}
         />
       </div>
 
-      <p className="text-sm text-gray-600">{progressEvent.message}</p>
+      <p className="text-sm text-slate-600">{progressEvent.message}</p>
 
       <div className="flex items-center gap-1">
         {STAGES.map((stage, idx) => (
@@ -49,7 +49,7 @@ export default function UploadProgress({ contractId }: Props) {
                 idx < currentStageIndex
                   ? 'bg-green-100 text-green-700'
                   : idx === currentStageIndex
-                  ? 'bg-indigo-100 text-indigo-700 font-medium'
+                  ? 'bg-teal-100 text-teal-700 font-medium'
                   : 'bg-gray-100 text-gray-400'
               }`}
             >

@@ -17,11 +17,6 @@ from contracts_platform.api.schemas.admin import (
 )
 from contracts_platform.auth.rbac import require_role
 from contracts_platform.core.config import settings
-from contracts_platform.db.neo4j.client import get_driver
-from contracts_platform.db.neo4j.repositories.clause_graph_repo import (
-    create_playbook_rule_node,
-    delete_playbook_rule_node,
-)
 from contracts_platform.db.postgresql.client import AsyncSessionLocal, engine, get_session
 from contracts_platform.db.qdrant.client import get_qdrant_client
 from contracts_platform.db.postgresql.models import PlaybookRule
@@ -33,6 +28,31 @@ from contracts_platform.pipeline.playbook_extractor import process_entire_playbo
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = structlog.get_logger()
+
+
+async def _upsert_playbook_rule_vector(rule: PlaybookRule) -> None:
+    """Embed and store the playbook rule in Qdrant using the Postgres rule id."""
+    oai = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    embedding_response = await oai.embeddings.create(
+        model=settings.EMBEDDING_MODEL,
+        input=rule.description,
+    )
+    vector = embedding_response.data[0].embedding
+    await clause_vector_repo.upsert_clause(
+        tenant_id="playbook",
+        clause_id=rule.id,
+        vector=vector,
+        payload={
+            "rule_id": rule.id,
+            "clause_type": rule.clause_type,
+            "jurisdiction": rule.jurisdiction,
+            "rule_type": rule.rule_type,
+            "description": rule.description,
+            "weight": rule.weight,
+            "is_active": rule.is_active,
+            "source": "playbook",
+        },
+    )
 
 
 @router.get("/playbook-rules", response_model=list[PlaybookRuleResponse])
@@ -73,49 +93,18 @@ async def create_playbook_rule(
     rule = result.scalar_one()
     logger.info("admin.playbook_rule.created", rule_id=rule_id, user=current_user.get("sub"))
 
-    # --- Qdrant: embed description and upsert rule vector ---
     try:
-        oai = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        embedding_response = await oai.embeddings.create(
-            model=settings.EMBEDDING_MODEL,
-            input=body.description,
-        )
-        vector = embedding_response.data[0].embedding
-        await clause_vector_repo.upsert_clause(
-            tenant_id="playbook",
-            clause_id=str(rule_id),
-            vector=vector,
-            payload={
-                "clause_type": body.clause_type,
-                "jurisdiction": body.jurisdiction,
-                "rule_type": body.rule_type,
-                "description": body.description,
-                "weight": body.weight,
-                "source": "playbook",
-            },
-        )
+        await _upsert_playbook_rule_vector(rule)
     except Exception as exc:
-        logger.warning(
+        logger.error(
             "admin.playbook_rule.qdrant_sync_failed",
             rule_id=rule_id,
             error=str(exc),
         )
-
-    # --- Neo4j: create PlaybookRule node with Jurisdiction and ClauseType links ---
-    try:
-        await create_playbook_rule_node(
-            rule_id=rule_id,
-            clause_type=body.clause_type,
-            jurisdiction=body.jurisdiction,
-            rule_type=body.rule_type,
-            description=body.description,
-        )
-    except Exception as exc:
-        logger.warning(
-            "admin.playbook_rule.neo4j_sync_failed",
-            rule_id=rule_id,
-            error=str(exc),
-        )
+        raise HTTPException(
+            status_code=502,
+            detail="Playbook rule was saved to PostgreSQL but could not be synced to Qdrant.",
+        ) from exc
 
     return PlaybookRuleResponse(
         id=rule.id,
@@ -140,7 +129,7 @@ async def upload_playbook_pdf(
 ) -> PlaybookRulePDFUploadResponse:
     """
     Upload a company policy PDF, extract playbook rules via OCR + LLM, and persist each rule
-    to PostgreSQL, Qdrant, and Neo4j.
+    to PostgreSQL and Qdrant.
     """
     async with AsyncSessionLocal() as session:
         return await _do_upload_playbook_pdf(file, session, current_user)
@@ -150,7 +139,7 @@ async def upload_playbook_pdf(
 async def clear_playbook_data(
     current_user: dict = Depends(require_role("admin")),
 ) -> ClearPlaybookDataResponse:
-    """Delete all playbook rules from PostgreSQL, Qdrant (clauses_playbook collection), and Neo4j."""
+    """Delete all playbook rules from PostgreSQL and Qdrant."""
     postgres_rules_deleted = 0
     qdrant_collection_cleared = False
     neo4j_nodes_deleted = 0
@@ -190,22 +179,6 @@ async def clear_playbook_data(
         logger.error("admin.clear_playbook.qdrant_failed", error=str(exc))
 
     # Neo4j — delete PlaybookRule nodes only
-    try:
-        driver = await get_driver()
-        async with driver.session() as neo4j_session:
-            result = await neo4j_session.run(
-                "MATCH (n:PlaybookRule) DETACH DELETE n"
-            )
-            summary = await result.consume()
-            neo4j_nodes_deleted = summary.counters.nodes_deleted
-        logger.info(
-            "admin.clear_playbook.neo4j_cleared",
-            nodes_deleted=neo4j_nodes_deleted,
-            user=current_user.get("sub"),
-        )
-    except Exception as exc:
-        logger.error("admin.clear_playbook.neo4j_failed", error=str(exc))
-
     logger.info(
         "admin.clear_playbook.completed",
         postgres_rules_deleted=postgres_rules_deleted,
@@ -259,6 +232,19 @@ async def update_playbook_rule(
         changed_by=current_user.get("sub", "unknown"),
     )
 
+    try:
+        await _upsert_playbook_rule_vector(rule)
+    except Exception as exc:
+        logger.error(
+            "admin.playbook_rule.qdrant_update_failed",
+            rule_id=rule_id,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Playbook rule was updated in PostgreSQL but could not be synced to Qdrant.",
+        ) from exc
+
     logger.info("admin.playbook_rule.updated", rule_id=rule_id, user=current_user.get("sub"))
     return PlaybookRuleResponse(
         id=rule.id,
@@ -277,7 +263,7 @@ async def delete_playbook_rule(
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_role("admin")),
 ) -> None:
-    """Hard-delete a playbook rule from PostgreSQL, Qdrant, and Neo4j."""
+    """Hard-delete a playbook rule from PostgreSQL and Qdrant."""
     result = await session.execute(select(PlaybookRule).where(PlaybookRule.id == rule_id))
     rule = result.scalar_one_or_none()
     if rule is None:
@@ -287,14 +273,9 @@ async def delete_playbook_rule(
     await session.commit()
 
     try:
-        await clause_vector_repo.delete_clause(tenant_id="playbook", clause_id=str(rule_id))
+        await clause_vector_repo.delete_clause(tenant_id="playbook", clause_id=rule_id)
     except Exception as exc:
         logger.warning("admin.playbook_rule.qdrant_delete_failed", rule_id=rule_id, error=str(exc))
-
-    try:
-        await delete_playbook_rule_node(rule_id=rule_id)
-    except Exception as exc:
-        logger.warning("admin.playbook_rule.neo4j_delete_failed", rule_id=rule_id, error=str(exc))
 
     logger.info("admin.playbook_rule.deleted", rule_id=rule_id, user=current_user.get("sub"))
 
@@ -376,49 +357,21 @@ async def _do_upload_playbook_pdf(file: UploadFile, session: AsyncSession, curre
             )
             continue
 
-        # Qdrant: embed description and upsert rule vector
         try:
-            oai = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-            embedding_response = await oai.embeddings.create(
-                model=settings.EMBEDDING_MODEL,
-                input=rule_create.description,
-            )
-            vector = embedding_response.data[0].embedding
-            await clause_vector_repo.upsert_clause(
-                tenant_id="playbook",
-                clause_id=str(rule_id),
-                vector=vector,
-                payload={
-                    "clause_type": rule_create.clause_type,
-                    "jurisdiction": rule_create.jurisdiction,
-                    "rule_type": rule_create.rule_type,
-                    "description": rule_create.description,
-                    "weight": rule_create.weight,
-                    "source": "playbook",
-                },
-            )
+            await _upsert_playbook_rule_vector(rule)
         except Exception as exc:
-            logger.warning(
+            logger.error(
                 "admin.playbook_pdf.qdrant_sync_failed",
                 rule_id=rule_id,
                 error=str(exc),
             )
-
-        # Neo4j: create PlaybookRule node
-        try:
-            await create_playbook_rule_node(
-                rule_id=rule_id,
-                clause_type=rule_create.clause_type,
-                jurisdiction=rule_create.jurisdiction,
-                rule_type=rule_create.rule_type,
-                description=rule_create.description,
-            )
-        except Exception as exc:
-            logger.warning(
-                "admin.playbook_pdf.neo4j_sync_failed",
-                rule_id=rule_id,
-                error=str(exc),
-            )
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Playbook rule {rule_id} was saved to PostgreSQL but could "
+                    "not be synced to Qdrant."
+                ),
+            ) from exc
 
         logger.info(
             "admin.playbook_pdf.rule_created",

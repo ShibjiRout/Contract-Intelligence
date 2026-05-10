@@ -4,32 +4,31 @@ import { contractsApi } from '../api/contracts'
 import Sidebar from '../components/layout/Sidebar'
 import TopBar from '../components/layout/TopBar'
 import ContractTable from '../components/dashboard/ContractTable'
-import RiskSummaryChart from '../components/dashboard/RiskSummaryChart'
 
 export default function DashboardPage() {
   const navigate = useNavigate()
 
-  const { data: contracts = [], isLoading, isError } = useQuery({
+  const { data: contracts = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['contracts'],
     queryFn: () => contractsApi.list().then((r) => r.data),
   })
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="app-shell">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="workspace">
         <TopBar />
-        <main className="flex-1 overflow-y-auto p-6 space-y-6">
+        <main className="premium-main space-y-6 soft-appear">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-semibold text-gray-900">Dashboard</h1>
-              <p className="text-sm text-gray-500 mt-0.5">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-950">Dashboard</h1>
+              <p className="text-sm text-slate-500 mt-1">
                 {contracts.length} contract{contracts.length !== 1 ? 's' : ''} total
               </p>
             </div>
             <button
               onClick={() => navigate('/upload')}
-              className="bg-indigo-600 text-white text-sm font-medium px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
+              className="btn-primary"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -39,17 +38,16 @@ export default function DashboardPage() {
           </div>
 
           {isError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+            <div className="premium-card border-red-200 bg-red-50/90 px-4 py-3 text-sm text-red-700">
               Failed to load contracts. Please refresh the page.
             </div>
           )}
 
           {!isLoading && !isError && (
             <>
-              <RiskSummaryChart contracts={contracts} />
               <div>
-                <h2 className="text-base font-medium text-gray-800 mb-3">All Contracts</h2>
-                <ContractTable contracts={contracts} />
+                <h2 className="text-base font-semibold text-slate-800 mb-3">All Contracts</h2>
+                <ContractTable contracts={contracts} onDeleted={() => refetch()} />
               </div>
             </>
           )}

@@ -27,7 +27,7 @@ dependencies = [
     "pypdf>=4.0",
     "python-docx>=1.1",
     # Azure services
-    "azure-ai-formrecognizer>=3.3",
+    "azure-ai-documentintelligence>=1.0",
     "azure-storage-blob>=12.19",
     "azure-storage-file-share>=12.15",
     "azure-monitor-opentelemetry>=1.2",

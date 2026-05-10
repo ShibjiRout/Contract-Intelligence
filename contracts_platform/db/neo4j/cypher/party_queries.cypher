@@ -1,6 +1,10 @@
-// FIND_PARTY_RISK
-MATCH (p:Party {party_id: $party_id})-[r:REVIEWED_BY]->(c:Contract)
-RETURN p.risk_score AS risk_score, count(c) AS contract_count
+// UPSERT_PARTY
+MERGE (p:Party {party_id: $party_id, tenant_id: $tenant_id})
+SET p.name = $name,
+    p.normalized_name = $normalized_name
 
-// FIND_PARTY_BY_NAME_HASH
-MATCH (p:Party) WHERE p.name_hash = $name_hash RETURN p
+// LINK_PARTY_TO_CONTRACT
+MATCH (c:Contract {contract_id: $contract_id})
+MATCH (p:Party {party_id: $party_id, tenant_id: c.tenant_id})
+MERGE (p)-[r:PARTY_TO]->(c)
+SET r.role = $role

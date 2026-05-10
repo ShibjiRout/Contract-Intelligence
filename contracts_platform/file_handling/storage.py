@@ -64,11 +64,19 @@ async def download_contract(contract_id: str, filename: str) -> bytes:
 
 
 async def delete_contract(contract_id: str, filename: str) -> None:
-    """Delete blob from Azure Blob Storage."""
+    """Delete blob from Azure Blob Storage. Missing blobs are treated as already deleted."""
     loop = asyncio.get_event_loop()
     try:
         await loop.run_in_executor(None, partial(_delete_sync, contract_id, filename))
         logger.info("storage.delete_complete", contract_id=contract_id, filename=filename)
     except Exception as exc:
+        exc_str = str(exc).lower()
+        if "resourcenotfound" in exc_str or "404" in exc_str or "does not exist" in exc_str:
+            logger.info(
+                "storage.delete_already_gone",
+                contract_id=contract_id,
+                filename=filename,
+            )
+            return
         logger.error("storage.delete_failed", contract_id=contract_id, error=str(exc))
         raise StorageError(f"Failed to delete contract {contract_id}: {exc}") from exc

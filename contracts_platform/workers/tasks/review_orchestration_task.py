@@ -17,13 +17,13 @@ from contracts_platform.workers.retry_policy import RETRY_POLICY
     max_retries=RETRY_POLICY["review_orchestration_task"]["max_retries"],
     default_retry_delay=RETRY_POLICY["review_orchestration_task"]["countdown"],
 )
-def review_orchestration_task(self, contract_id: str) -> None:
-    """Run the LangGraph review orchestration (playbook + vector + graph checks)."""
+def review_orchestration_task(self, contract_id: str, clause_id: str) -> None:
+    """Run the LangGraph sequential pipeline for a single risky clause."""
 
     async def _run() -> None:
         db = await get_database()
         try:
-            publish(contract_id, "review_orchestration", 78, "orchestration started")
+            publish(contract_id, "review_orchestration", 82, f"analysing clause {clause_id}")
 
             await contract_repo.update_status(
                 db, contract_id, ContractStatus.PROCESSING, stage="review_orchestration"
@@ -31,13 +31,20 @@ def review_orchestration_task(self, contract_id: str) -> None:
 
             from contracts_platform.orchestration.graph import run_review_graph
 
-            await run_review_graph(contract_id)
+            await run_review_graph(contract_id, clause_id)
 
-            publish(contract_id, "review_orchestration", 90, "orchestration complete")
+            publish(contract_id, "review_orchestration", 95, "clause analysis complete")
 
-            from contracts_platform.workers.tasks.recommendation_task import recommendation_task
-
-            recommendation_task.apply_async(args=[contract_id], queue="recommendation")
+            # Check if all risky clauses are done — if so, set REVIEW_READY
+            remaining = await db["clauses"].count_documents(
+                {"contract_id": contract_id, "status": "need_changes", "ai_recommendation": None}
+            )
+            if remaining == 0:
+                await contract_repo.update_status(
+                    db, contract_id, ContractStatus.REVIEW_READY, stage="review_orchestration"
+                )
+                publish(contract_id, "review_orchestration", 100, "ready for lawyer review")
+                logger.info("review_orchestration_task.review_ready", contract_id=contract_id)
 
         except Exception as exc:
             await contract_repo.append_error(

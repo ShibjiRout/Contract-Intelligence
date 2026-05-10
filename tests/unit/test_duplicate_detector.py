@@ -103,7 +103,7 @@ async def test_check_duplicate_uses_correct_hash():
     expected_hash = compute_file_hash(SAMPLE_BYTES)
     captured_hash = None
 
-    async def capture_hash(db, file_hash):
+    async def capture_hash(db, file_hash, tenant_id=None):
         nonlocal captured_hash
         captured_hash = file_hash
         return None
@@ -115,3 +115,23 @@ async def test_check_duplicate_uses_correct_hash():
         await check_duplicate(mock_db, SAMPLE_BYTES)
 
     assert captured_hash == expected_hash
+
+
+@pytest.mark.asyncio
+async def test_check_duplicate_passes_tenant_id():
+    """Verify duplicate lookup can be scoped to the current tenant."""
+    mock_db = AsyncMock()
+    captured_tenant_id = None
+
+    async def capture_tenant(db, file_hash, tenant_id=None):
+        nonlocal captured_tenant_id
+        captured_tenant_id = tenant_id
+        return None
+
+    with patch(
+        "contracts_platform.file_handling.duplicate_detector.contract_repo"
+    ) as mock_repo:
+        mock_repo.get_by_file_hash = capture_tenant
+        await check_duplicate(mock_db, SAMPLE_BYTES, tenant_id="tenant_abc")
+
+    assert captured_tenant_id == "tenant_abc"

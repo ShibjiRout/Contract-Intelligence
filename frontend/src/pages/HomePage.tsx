@@ -52,14 +52,14 @@ export default function HomePage() {
   const navigate = useNavigate()
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
+    <div className="min-h-screen flex flex-col">
       {/* Nav */}
-      <nav className="border-b border-gray-200 bg-white sticky top-0 z-10">
+      <nav className="border-b border-slate-200 bg-white/80 sticky top-0 z-10 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <span className="text-lg font-bold text-indigo-700">Contract Intelligence</span>
+          <span className="text-lg font-bold text-slate-950">Contract Intelligence</span>
           <button
             onClick={() => navigate('/login')}
-            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+            className="btn-primary"
           >
             Sign In
           </button>
@@ -67,28 +67,28 @@ export default function HomePage() {
       </nav>
 
       {/* Hero */}
-      <section className="flex-1 bg-gradient-to-b from-indigo-50 to-white">
+      <section className="flex-1">
         <div className="max-w-6xl mx-auto px-6 py-24 text-center">
-          <span className="inline-block px-3 py-1 bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-full uppercase tracking-wide mb-6">
+          <span className="inline-block px-3 py-1 bg-amber-100 text-amber-800 text-xs font-semibold rounded-full uppercase tracking-wide mb-6 ring-1 ring-amber-200">
             Powered by GPT-4o + LangGraph
           </span>
-          <h1 className="text-5xl font-extrabold text-gray-900 leading-tight mb-6">
+          <h1 className="text-5xl font-extrabold text-slate-950 leading-tight mb-6 tracking-tight">
             AI-Powered Contract Review
           </h1>
-          <p className="text-xl text-gray-500 max-w-2xl mx-auto mb-10">
+          <p className="text-xl text-slate-600 max-w-2xl mx-auto mb-10">
             Upload a contract, get instant clause extraction, jurisdiction-aware risk scoring, and
             actionable recommendations — all reviewed by your legal team on a single dashboard.
           </p>
           <div className="flex items-center justify-center gap-4">
             <button
               onClick={() => navigate('/login')}
-              className="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+              className="btn-primary px-6 py-3"
             >
               Get Started
             </button>
             <button
               onClick={() => navigate('/login')}
-              className="px-6 py-3 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-colors"
+              className="btn-secondary px-6 py-3"
             >
               Sign In
             </button>
@@ -97,7 +97,7 @@ export default function HomePage() {
       </section>
 
       {/* Features */}
-      <section className="py-20 bg-white">
+      <section className="py-20 bg-white/70">
         <div className="max-w-6xl mx-auto px-6">
           <h2 className="text-3xl font-bold text-gray-900 text-center mb-4">
             Everything your team needs
@@ -109,9 +109,9 @@ export default function HomePage() {
             {features.map((f) => (
               <div
                 key={f.title}
-                className="bg-gray-50 border border-gray-200 rounded-xl p-6 hover:shadow-md transition-shadow"
+                className="premium-card premium-card-hover p-6"
               >
-                <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center mb-4">
+                <div className="w-12 h-12 bg-amber-100 text-teal-800 rounded-lg flex items-center justify-center mb-4">
                   {f.icon}
                 </div>
                 <h3 className="text-base font-semibold text-gray-900 mb-2">{f.title}</h3>

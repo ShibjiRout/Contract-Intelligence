@@ -58,8 +58,7 @@ async def explainability_node(state: ContractReviewState) -> dict:
         else "Qdrant data unavailable."
     )
     n4_summary = (
-        f"{graph_result.get('conflict_count', 0)} cross-contract conflicts; "
-        f"{graph_result.get('counterparty_flags', 0)} counterparty risk flags."
+        f"{graph_result.get('risky_history', 0)} prior risky clause(s) found for linked parties."
         if graph_result
         else "Neo4j data unavailable."
     )

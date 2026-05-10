@@ -93,6 +93,24 @@ async def test_get_contract_not_found(mock_db):
 
 
 @pytest.mark.asyncio
+async def test_get_contract_for_tenant_filters_by_contract_and_tenant(mock_db):
+    """Verify tenant-scoped contract lookup includes tenant_id in the query."""
+    from contracts_platform.db.mongodb.repositories import contract_repo
+
+    mock_collection = AsyncMock()
+    mock_collection.find_one.return_value = {"contract_id": "c1", "tenant_id": "tenant_a"}
+    mock_db.__getitem__ = MagicMock(return_value=mock_collection)
+
+    result = await contract_repo.get_contract_for_tenant(mock_db, "c1", "tenant_a")
+
+    assert result is not None
+    mock_collection.find_one.assert_called_once_with(
+        {"contract_id": "c1", "tenant_id": "tenant_a"},
+        {"_id": 0},
+    )
+
+
+@pytest.mark.asyncio
 async def test_get_by_file_hash_found(mock_db):
     """Verify get_by_file_hash returns the matching document."""
     from contracts_platform.db.mongodb.repositories import contract_repo
@@ -104,6 +122,24 @@ async def test_get_by_file_hash_found(mock_db):
     result = await contract_repo.get_by_file_hash(mock_db, "abc123")
     assert result is not None
     assert result["contract_id"] == "c3"
+
+
+@pytest.mark.asyncio
+async def test_get_by_file_hash_can_filter_by_tenant(mock_db):
+    """Verify duplicate lookup can be tenant-scoped."""
+    from contracts_platform.db.mongodb.repositories import contract_repo
+
+    mock_collection = AsyncMock()
+    mock_collection.find_one.return_value = {"contract_id": "c3", "file_hash": "abc123"}
+    mock_db.__getitem__ = MagicMock(return_value=mock_collection)
+
+    result = await contract_repo.get_by_file_hash(mock_db, "abc123", tenant_id="tenant_a")
+
+    assert result is not None
+    mock_collection.find_one.assert_called_once_with(
+        {"file_hash": "abc123", "tenant_id": "tenant_a"},
+        {"_id": 0},
+    )
 
 
 @pytest.mark.asyncio

@@ -7,9 +7,9 @@ import type { AppDispatch } from '../../store'
 import type { UserRole } from '../../types'
 
 const ROLE_BADGE: Record<UserRole, string> = {
-  admin: 'bg-indigo-100 text-indigo-700',
-  senior_lawyer: 'bg-blue-100 text-blue-700',
-  junior_lawyer: 'bg-gray-100 text-gray-600',
+  admin: 'bg-amber-100 text-amber-800 ring-1 ring-amber-200',
+  senior_lawyer: 'bg-teal-100 text-teal-800 ring-1 ring-teal-200',
+  junior_lawyer: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200',
 }
 
 const ROLE_LABEL: Record<UserRole, string> = {
@@ -33,14 +33,17 @@ export default function TopBar() {
   }
 
   return (
-    <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-10">
-      <h2 className="text-base font-semibold text-gray-900">Contract Intelligence</h2>
+    <header className="h-16 bg-white/82 border-b border-slate-200/80 flex items-center justify-between px-6 sticky top-0 z-10 backdrop-blur-xl">
+      <div>
+        <h2 className="text-base font-semibold text-slate-950 tracking-tight">Contract Intelligence</h2>
+        <p className="text-xs text-slate-500">Risk review and legal operations</p>
+      </div>
       <div className="flex items-center gap-4">
         {user && (
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-900">{user.full_name}</span>
+          <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white/80 py-1 pl-3 pr-1 shadow-sm">
+            <span className="text-sm font-semibold text-slate-900">{user.full_name}</span>
             <span
-              className={`px-2 py-0.5 rounded-full text-xs font-medium ${ROLE_BADGE[user.role]}`}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold ${ROLE_BADGE[user.role]}`}
             >
               {ROLE_LABEL[user.role]}
             </span>
@@ -48,7 +51,7 @@ export default function TopBar() {
         )}
         <button
           onClick={handleLogout}
-          className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1 transition-colors"
+          className="text-sm text-slate-500 hover:text-slate-950 flex items-center gap-1 transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path

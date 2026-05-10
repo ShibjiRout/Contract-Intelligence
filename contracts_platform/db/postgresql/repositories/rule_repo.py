@@ -29,6 +29,7 @@ async def get_rules_for_jurisdiction(
             "rule_type": r.rule_type,
             "description": r.description,
             "weight": r.weight,
+            "violation_message": r.violation_message,
         }
         for r in rows
     ]

@@ -5,18 +5,22 @@ export default function Sidebar() {
   const { user, hasRole } = useAuth()
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+    `flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
       isActive
-        ? 'bg-indigo-600 text-white'
-        : 'text-gray-700 hover:bg-gray-100'
+        ? 'bg-white/12 text-amber-100 shadow-sm ring-1 ring-white/10'
+        : 'text-slate-300 hover:bg-white/8 hover:text-white'
     }`
 
   return (
-    <aside className="w-64 bg-white border-r border-gray-200 flex flex-col h-screen sticky top-0">
-      <div className="px-6 py-5 border-b border-gray-200">
-        <h1 className="text-lg font-bold text-indigo-700 leading-tight">
+    <aside className="w-64 bg-slate-950 text-white flex flex-col h-screen sticky top-0 shadow-2xl">
+      <div className="px-6 py-5 border-b border-white/10 bg-gradient-to-br from-slate-900 to-slate-950">
+        <div className="h-9 w-9 rounded-lg bg-amber-400/90 text-slate-950 flex items-center justify-center font-black mb-3 shadow-lg shadow-amber-900/20">
+          CI
+        </div>
+        <h1 className="text-lg font-bold text-white leading-tight tracking-tight">
           Contract<br />Intelligence
         </h1>
+        <p className="mt-2 text-xs text-slate-400">Legal review workspace</p>
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1">
@@ -46,9 +50,9 @@ export default function Sidebar() {
       </nav>
 
       {user && (
-        <div className="px-4 py-4 border-t border-gray-200">
-          <p className="text-sm font-medium text-gray-900 truncate">{user.full_name}</p>
-          <p className="text-xs text-gray-500 capitalize">{user.role.replace('_', ' ')}</p>
+        <div className="mx-3 mb-3 rounded-xl border border-white/10 bg-white/6 px-4 py-4">
+          <p className="text-sm font-semibold text-white truncate">{user.full_name}</p>
+          <p className="text-xs text-amber-200/80 capitalize">{user.role.replace('_', ' ')}</p>
         </div>
       )}
     </aside>

@@ -55,7 +55,12 @@ def ingest_task(
             if len(file_bytes) > _MAX_SIZE_BYTES:
                 raise ValueError(f"File size {len(file_bytes)} exceeds 50 MB limit")
 
-            is_duplicate, existing_id = await check_duplicate(db, file_bytes, exclude_contract_id=contract_id)
+            is_duplicate, existing_id = await check_duplicate(
+                db,
+                file_bytes,
+                exclude_contract_id=contract_id,
+                tenant_id=tenant_id,
+            )
 
             if is_duplicate:
                 publish(contract_id, "ingest", 100, "duplicate detected")
