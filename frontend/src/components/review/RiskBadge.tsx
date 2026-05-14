@@ -1,7 +1,7 @@
 import type { RiskCategory } from '../../types'
 
 interface Props {
-  level: RiskCategory | null | undefined
+  level: RiskCategory | 'UNKNOWN' | null | undefined
   size?: 'sm' | 'md'
 }
 

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 
 import redis
 
@@ -43,6 +44,42 @@ def ocr_task(self, contract_id: str, file_bytes_b64: str, filename: str) -> None
 
             r = redis.from_url(settings.REDIS_URL, decode_responses=True)
             r.setex(f"ocr_text:{contract_id}", _OCR_TEXT_TTL, extracted_text)
+
+            # Document-level playbook similarity pre-check. If this passes,
+            # clause extraction will still run so we have real clause records,
+            # but it can short-circuit the later clause-by-clause review path.
+            try:
+                from contracts_platform.pipeline.playbook_similarity import (
+                    AUTO_ACCEPT_THRESHOLD,
+                    should_auto_accept_contract,
+                )
+
+                auto_accept_all, top_score = await should_auto_accept_contract(extracted_text)
+                if auto_accept_all:
+                    r.setex(
+                        f"auto_accept_all:{contract_id}",
+                        _OCR_TEXT_TTL,
+                        json.dumps(
+                            {
+                                "threshold": AUTO_ACCEPT_THRESHOLD,
+                                "top_score": top_score,
+                            }
+                        ),
+                    )
+                    logger.info(
+                        "ocr_task.auto_accept_flagged",
+                        contract_id=contract_id,
+                        threshold=AUTO_ACCEPT_THRESHOLD,
+                        top_score=top_score,
+                    )
+                else:
+                    r.delete(f"auto_accept_all:{contract_id}")
+            except Exception as exc:
+                logger.warning(
+                    "ocr_task.playbook_similarity_failed",
+                    contract_id=contract_id,
+                    error=str(exc),
+                )
 
             try:
                 from contracts_platform.db.neo4j.repositories.contract_graph_repo import (

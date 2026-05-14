@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { contractsApi } from '../api/contracts'
@@ -47,9 +47,11 @@ export default function ReviewPage() {
     refetchInterval: contract?.status === 'REVIEW_READY' ? 5000 : false,
   })
 
-  const pdfUrl: string | null = contract
-    ? `${import.meta.env.VITE_API_URL}/contracts/${contractId}/file`
-    : null
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!contractId || !contract || contract.status === 'COMPLETED') return
+    contractsApi.getFileBlobUrl(contractId).then(setPdfUrl).catch(() => setPdfUrl(null))
+  }, [contractId, contract?.status])
   const firstClauseId = clauses[0]?.clause_id ?? null
   const isProcessing = contract && PROCESSING_STATUSES.includes(contract.status)
   const isCompleted = contract?.status === 'COMPLETED'
@@ -57,6 +59,8 @@ export default function ReviewPage() {
   const approvedCount = clauses.filter(c => c.status === 'approved').length
   const rejectedCount = clauses.filter(c => c.status === 'rejected').length
   const modifiedCount = clauses.filter(c => c.status === 'need_changes').length
+  const undecidedCount = clauses.filter(c => !['approved', 'rejected', 'need_changes'].includes(c.status ?? '')).length
+  const allDecided = clauses.length > 0 && undecidedCount === 0
   const [completing, setCompleting] = useState(false)
 
   const handleComplete = async () => {
@@ -124,9 +128,9 @@ export default function ReviewPage() {
               {contractId && !isCompleted && (
                 <button
                   onClick={handleComplete}
-                  disabled={completing || contract?.status !== 'REVIEW_READY'}
+                  disabled={completing || contract?.status !== 'REVIEW_READY' || !allDecided}
                   className="btn-primary py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={contract?.status !== 'REVIEW_READY' ? 'Waiting for AI analysis to complete…' : undefined}
+                  title={contract?.status !== 'REVIEW_READY' ? 'Waiting for AI analysis to complete…' : !allDecided ? `${undecidedCount} clause(s) still need your decision` : undefined}
                 >
                   {completing ? 'Completing...' : 'Complete Review'}
                 </button>

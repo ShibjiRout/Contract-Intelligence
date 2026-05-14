@@ -106,7 +106,7 @@ async def upload_contract(
 
 
 @router.get(
-    "/",
+    "",
     response_model=list[ContractDetailResponse],
     dependencies=[Depends(require_role("junior_lawyer", "senior_lawyer", "admin"))],
 )

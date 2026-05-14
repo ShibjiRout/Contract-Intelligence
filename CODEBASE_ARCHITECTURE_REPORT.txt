@@ -1,0 +1,854 @@
+CODEBASE ARCHITECTURE REPORT
+Project: Contract Intelligence Platform
+Scope date: 2026-05-12
+Scan scope: source code only. Markdown files and Claude/agent scaffolding were excluded from the review.
+
+1. Executive Summary
+
+This repository is a full-stack contract review platform with:
+- A FastAPI backend in `contracts_platform`
+- A React + Vite frontend in `frontend`
+- Celery workers for asynchronous document processing
+- MongoDB for operational contract/clause state
+- PostgreSQL for playbook rules and rule metadata
+- Qdrant for clause and playbook semantic search
+- Neo4j for contract/party/clause relationship history
+- Azure Blob Storage for uploaded files
+- Azure File Share for OCR text persistence
+- Redis for rate limiting, progress events, OCR caching, and task transport/backend
+- OpenAI and Azure Document Intelligence for extraction and recommendation generation
+
+The product goal is to take uploaded contracts, extract clauses, compare them against internal standards, and present lawyers with AI-assisted review recommendations and approval workflows.
+
+2. Repository Layout
+
+Top-level directories:
+- `contracts_platform`: backend application code
+- `frontend`: web UI
+- `scripts`: setup and seeding helpers
+- `docker`: container definitions
+- `tests`: unit, integration, and E2E coverage
+- `data`: present but not used by the reviewed source paths
+
+Backend package layers:
+- `api`: FastAPI app, routers, schemas, middleware
+- `auth`: JWT cookies, role checks, API key validation
+- `core`: config, constants, exceptions, logging, tracing, encryption, security
+- `db`: MongoDB, PostgreSQL, Qdrant, Neo4j access layers
+- `file_handling`: validation, blob storage, temp OCR storage, duplicate detection
+- `notifications`: WebSocket progress fanout
+- `orchestration`: LangGraph review graph and nodes
+- `pipeline`: OCR, clause extraction, playbook extraction, recommendations, embeddings, cost tracking
+- `workers`: Celery app, queues, retry policy, dead-letter handling, task pipeline
+
+3. Runtime Architecture
+
+3.1 Synchronous request path
+
+The FastAPI app starts in `contracts_platform/api/main.py`.
+Startup behavior:
+- Configures structlog logging
+- Configures optional Azure OpenTelemetry tracing
+- Registers CORS, request logging middleware, and Redis-backed rate limiting middleware
+- Registers router groups for admin, auth, contracts, clauses, users, and webhooks
+- Exposes `/health`
+- Exposes `/ws/contracts/{contract_id}` for live progress updates
+
+3.2 Asynchronous processing path
+
+The main business flow is not handled in the request thread. It uses Celery queues:
+- `ingest`
+- `ocr`
+- `extraction`
+- `qdrant_check`
+- `orchestration`
+- `dlq`
+
+The pipeline is:
+1. `/contracts/upload` stores metadata and raw file, then enqueues `ingest_task`
+2. `ingest_task` validates MIME/size and re-checks duplicates, then enqueues `ocr_task`
+3. `ocr_task` runs OCR, caches OCR text in Redis, stores OCR text in Azure File Share, extracts parties, populates Neo4j parties/links, then enqueues `clause_extraction_task`
+4. `clause_extraction_task` calls the LLM clause extractor, stores clauses in MongoDB, embeds clauses into tenant Qdrant collections, creates Neo4j clause nodes, then enqueues `qdrant_check_task`
+5. `qdrant_check_task` compares each clause to playbook vectors in Qdrant
+   - high-confidence matches are auto-approved and marked GREEN
+   - lower-confidence matches are marked `ai_flagged` and sent to `review_orchestration_task`
+6. `review_orchestration_task` runs a sequential LangGraph review pipeline per risky clause
+7. Lawyers approve, reject, or request changes through `/clauses/*` endpoints
+8. Completing a contract deletes raw file access artifacts while retaining review history
+
+4. Datastore Responsibilities
+
+4.1 MongoDB
+
+Primary operational store.
+Collections inferred from code:
+- `contracts`
+- `clauses`
+- `users`
+- `api_keys`
+- `audit_summaries`
+- `cost_tracking`
+
+Stored responsibilities:
+- Contract lifecycle state
+- Clause review state and AI outputs
+- User accounts
+- API keys for webhooks
+- Audit summaries
+- LLM cost records
+
+Key repository functions:
+- `create_contract`
+- `get_contract`
+- `get_contract_for_tenant`
+- `update_status`
+- `append_error`
+- `update_final_risk`
+- `get_by_file_hash`
+- `list_contracts`
+- `delete_contract_data`
+- `create_audit_summary`
+- `get_audit_summary`
+- `record_llm_call`
+- `get_cost_summary`
+
+Observations:
+- MongoDB is the source of truth for review progress and clause outcomes.
+- Tenant isolation is implemented in many query paths, especially contract and clause reads.
+
+4.2 PostgreSQL
+
+Authoritative rules and metadata store.
+Models:
+- `PlaybookRule`
+- `RuleVersion`
+- `Jurisdiction`
+- `ClauseTypeRegistry`
+- `RuleWeight`
+
+Responsibilities:
+- Internal policy/playbook rules
+- Rule change history
+- Jurisdiction registry
+- Clause type registry
+- Weighting configuration for rule-based scoring
+
+Repository functions:
+- `get_rules_for_jurisdiction`
+- `get_required_clauses`
+- `get_weights`
+- `create_rule`
+- `create_rule_version`
+- `get_all_jurisdictions`
+- `get_jurisdiction`
+
+Observations:
+- The admin panel and admin APIs treat PostgreSQL as the control plane for legal policy.
+- Qdrant vectors for playbook rules are derived from PostgreSQL, not the other way around.
+
+4.3 Qdrant
+
+Semantic search store.
+Collection patterns:
+- `clauses_{tenant_id}` for tenant clause vectors
+- `clauses_playbook` indirectly via tenant id `playbook`
+- temporary ingestion collections are supported but not fully wired end-to-end
+
+Responsibilities:
+- Store clause embeddings for similarity search
+- Store playbook rule embeddings
+- Retrieve accepted wording examples
+- Auto-approve standard clauses when they closely match playbook examples
+
+Important functions:
+- `_ensure_collection`
+- `upsert_clause`
+- `search_similar`
+- `delete_clause`
+- `delete_clauses`
+- `create_temp_collection`
+- `upsert_chunk`
+- `search_collection`
+- `delete_temp_collection`
+- `cleanup_stale`
+- `search_similar_clauses`
+- `get_accepted_wording`
+
+4.4 Neo4j
+
+Relationship and precedent store.
+Graph entities implied by repository code:
+- `Party`
+- `Contract`
+- `Clause`
+- `Reviewer`
+
+Relationships:
+- `PARTY_TO`
+- `CONTAINS`
+- `REVIEWED`
+
+Responsibilities:
+- Track which parties appeared in which contracts
+- Track which clauses belong to which contracts
+- Track review decisions
+- Retrieve accepted precedents by party and clause type
+- Retrieve risky historical clause patterns
+
+Important functions:
+- `create_contract_node`
+- `link_party_to_contract`
+- `delete_contract_graph`
+- `get_accepted_precedents`
+- `get_contract_party_risky_clause_history`
+- `create_clause_node`
+- `record_clause_review`
+- `upsert_party`
+- `get_party_risk_history`
+
+5. Backend Module Inventory
+
+5.1 Core
+
+`core/config.py`
+- `Settings`: central Pydantic settings model with URLs, secrets, Azure settings, OpenAI settings, auth settings, and app settings
+
+`core/constants.py`
+- `RiskLevel`: GREEN, AMBER, RED, UNKNOWN
+- `ContractStatus`: UPLOADED, PROCESSING, OCR_COMPLETE, EXTRACTION_COMPLETE, REVIEW_READY, APPROVED, REJECTED, ERROR, COMPLETED
+- `ClauseType`: 12 supported clause classes
+- `UserRole`: junior_lawyer, senior_lawyer, admin
+
+`core/exceptions.py`
+- Custom exception hierarchy for platform, auth, validation, OCR, LLM, storage, and duplicate cases
+
+`core/security.py`
+- `create_access_token`
+- `create_refresh_token`
+- `decode_token`
+- `hash_password`
+- `verify_password`
+
+`core/encryption.py`
+- `_get_fernet`
+- `encrypt`
+- `decrypt`
+
+`core/logging.py`
+- `setup_logging`
+
+`core/tracing.py`
+- `setup_tracing`
+
+5.2 Auth
+
+`auth/jwt_handler.py`
+- `get_token_from_cookie`
+- `get_current_user`
+
+`auth/oauth2.py`
+- `authenticate_user`
+
+`auth/rbac.py`
+- `require_role`
+
+`auth/api_key_manager.py`
+- `generate_api_key`
+- `validate_api_key`
+
+Auth design:
+- Primary auth is cookie-based JWT, not bearer-token header auth
+- Access token and refresh token are both stored as secure httpOnly cookies
+- Frontend still receives an access token in the login response, but operational auth relies on cookies
+
+5.3 API routers
+
+`api/routers/auth.py`
+- `_set_auth_cookies`
+- `login`
+- `refresh`
+- `logout`
+- `get_me`
+
+`api/routers/users.py`
+- `list_users`
+- `create_user`
+- `update_user`
+
+`api/routers/webhooks.py`
+- `_require_api_key`
+- `contract_decision_webhook`
+
+`api/routers/contracts.py`
+- `upload_contract`
+- `list_contracts`
+- `get_contract`
+- `get_contract_status`
+- `get_contract_file`
+- `complete_contract`
+- `delete_contract_data`
+- `delete_contract`
+- `list_clauses`
+
+`api/routers/clauses.py`
+- `_get_clause_or_404`
+- `_get_clause_for_tenant_or_404`
+- `_record_neo4j_decision`
+- `approve_clause`
+- `reject_clause`
+- `modify_clause`
+- `add_clause`
+- `delete_clause`
+- `get_recommendation`
+
+`api/routers/admin.py`
+- `_upsert_playbook_rule_vector`
+- `list_playbook_rules`
+- `create_playbook_rule`
+- `upload_playbook_pdf`
+- `clear_playbook_data`
+- `update_playbook_rule`
+- `delete_playbook_rule`
+- `_do_upload_playbook_pdf`
+
+API design notes:
+- All core business endpoints are role-protected
+- Admin flows support direct rule CRUD and PDF-driven playbook ingestion
+- Contract completion removes preview artifacts without deleting clause decisions
+- There is a separate full purge endpoint for contract-scoped data
+
+5.4 Middleware and dependencies
+
+`api/dependencies.py`
+- `get_db`
+- `get_current_user`
+
+`api/middleware/logging_middleware.py`
+- `LoggingMiddleware.dispatch`
+
+`api/middleware/rate_limit_middleware.py`
+- `RateLimitMiddleware._is_limited`
+- `RateLimitMiddleware.dispatch`
+
+`api/middleware/tracing_middleware.py`
+- file is empty
+
+5.5 File handling
+
+`file_handling/validator.py`
+- `validate_upload`
+
+`file_handling/duplicate_detector.py`
+- `compute_file_hash`
+- `check_duplicate`
+
+`file_handling/storage.py`
+- `_get_blob_client`
+- `_upload_sync`
+- `_download_sync`
+- `_delete_sync`
+- `upload_contract`
+- `download_contract`
+- `delete_contract`
+
+`file_handling/temp_storage.py`
+- `_get_file_client`
+- `_save_sync`
+- `_load_sync`
+- `_delete_sync`
+- `save_temp_text`
+- `load_temp_text`
+- `delete_temp_file`
+
+6. Pipeline and AI Modules
+
+6.1 OCR pipeline
+
+`pipeline/ocr/providers/azure_ocr_provider.py`
+- `_analyze_sync_pages`
+- `_analyze_sync_markdown`
+- `analyze_document`
+- `analyze_document_markdown`
+
+`pipeline/ocr/extractor.py`
+- `extract_text`
+- `extract_markdown`
+- `extract_pages`
+
+`pipeline/ocr/confidence.py`
+- `score_page`
+- `find_low_confidence_pages`
+- `overall_confidence`
+
+`pipeline/ocr/splitter.py`
+- `split_markdown_by_headings`
+
+`pipeline/ocr/table_extractor.py`
+- `extract_tables`
+
+Behavior:
+- Contract OCR uses page-wise plain text extraction
+- Playbook PDF ingestion uses markdown OCR so headings can be chunked cleanly
+- Low-confidence pages are logged, not blocked
+
+6.2 Clause extraction
+
+`pipeline/clause_extraction/extractor.py`
+- Large OpenAI-driven clause extractor with:
+  - exhaustive extraction system prompt
+  - JSON schema structured output
+  - one few-shot example
+  - cost estimation
+  - Pydantic validation
+  - regex fallback parsing when individual clauses fail validation
+- exported function: `extract_clauses`
+
+`pipeline/clause_extraction/validator.py`
+- `ExtractedClause`
+- `validate_clause`
+
+`pipeline/clause_extraction/fallback_parser.py`
+- `_parse_dates`
+- `parse_clause`
+
+`pipeline/clause_extraction/missing_clause_detector.py`
+- `detect_missing`
+
+Behavior:
+- The extractor is optimized for completeness and schema compliance
+- Fallback parsing preserves partial value when LLM output is malformed
+- Missing clause detection compares extracted clause types with required PostgreSQL rules
+
+6.3 Party extraction
+
+`pipeline/party_extraction/normalizer.py`
+- `normalize_party_name`
+- `generate_party_id`
+
+`pipeline/party_extraction/extractor.py`
+- `_clean_candidate`
+- `_infer_role`
+- `_to_party`
+- `extract_parties`
+
+Behavior:
+- Simple heuristic extraction focused on "between X and Y" contract openings
+- Party identities are normalized and hashed for cross-contract matching
+
+6.4 Recommendations and accepted wording
+
+`pipeline/recommendation/wording_retriever.py`
+- `retrieve_accepted_wording`
+
+`pipeline/recommendation/generator.py`
+- `generate_recommendation`
+- `_estimate_cost`
+- uses clause text, rule violation context, and accepted wording examples
+- outputs JSON fields: `recommendation`, `suggested_fix`, `alternative_fixes`
+
+`pipeline/recommendation/fix_suggester.py`
+- `generate_fixes`
+
+Observation:
+- `fix_suggester.py` writes `recommendation` and `suggested_fix`, but the rest of the system stores `ai_recommendation`, so this path appears partially stale.
+
+6.5 Playbook extraction
+
+`pipeline/playbook_extractor.py`
+- `ClauseRule`
+- `PlaybookExtraction`
+- `extract_playbook_rules_from_text`
+- `process_entire_playbook`
+
+Behavior:
+- OCR markdown chunks are processed concurrently with a semaphore
+- Each chunk can yield multiple REQUIRED, CONDITIONAL, and FORBIDDEN rules
+- Results are later persisted to PostgreSQL and embedded into Qdrant
+
+6.6 Embeddings and cost tracking
+
+`pipeline/embedder.py`
+- `embed_text`
+
+`pipeline/cost_tracker.py`
+- `record_llm_call`
+
+7. Orchestration Layer
+
+7.1 State and graph
+
+`orchestration/state.py`
+- `ContractReviewState`
+
+`orchestration/graph.py`
+- `build_graph`
+- `run_review_graph`
+
+The LangGraph is sequential:
+1. intent extraction
+2. gap analysis
+3. precedent check
+4. playbook scoring
+5. recommendation generation
+
+7.2 Nodes
+
+`intent_extraction_node.py`
+- `intent_extraction_node`
+- summarizes the clause's legal purpose
+
+`gap_analysis_node.py`
+- `gap_analysis_node`
+- embeds clause intent and compares it to the closest playbook wording in Qdrant
+
+`precedent_check_node.py`
+- `precedent_check_node`
+- retrieves prior accepted examples by party from Neo4j
+
+`playbook_score_node.py`
+- `playbook_score_node`
+- checks clause text against PostgreSQL rules
+- outputs GREEN, AMBER, or RED
+
+`recommendation_node.py`
+- `recommendation_node`
+- builds a lawyer-facing recommendation from the previous node outputs
+
+`checkpoints/redis_checkpointer.py`
+- `RedisCheckpointer.save`
+- `RedisCheckpointer.load`
+- `RedisCheckpointer.delete`
+
+Observation:
+- The checkpointer exists but is not used in graph compilation in the current implementation.
+
+8. Worker Layer
+
+`workers/celery_app.py`
+- Celery app configuration
+- Windows-aware `solo` worker pool fallback
+
+`workers/queues.py`
+- queue declarations and task routing
+
+`workers/retry_policy.py`
+- retry configuration by task name
+
+`workers/progress_tracker.py`
+- `_get_redis`
+- `publish`
+
+`workers/dead_letter.py`
+- `dead_letter_handler`
+
+Task files:
+- `ingest_task.py`
+- `ocr_task.py`
+- `clause_extraction_task.py`
+- `qdrant_check_task.py`
+- `review_orchestration_task.py`
+
+Behavior notes:
+- Every stage updates MongoDB status and publishes Redis progress events
+- Dead-letter processing sets contract status to ERROR and appends an error record
+- Workers rely heavily on `asyncio.run()` wrappers inside sync Celery tasks
+
+9. Frontend Architecture
+
+9.1 Stack
+
+Frontend technologies:
+- React 19
+- TypeScript 6
+- Vite 8
+- Tailwind CSS 4
+- Redux Toolkit
+- TanStack Query
+- Axios
+- React Router 7
+- react-pdf
+- docx + file-saver
+
+9.2 App shell
+
+`src/App.tsx`
+- wraps Redux and QueryClient
+- defines routes:
+  - `/`
+  - `/login`
+  - `/dashboard`
+  - `/upload`
+  - `/review/:contractId`
+  - `/admin`
+
+`src/main.tsx`
+- renders the app into `#root`
+
+9.3 State and auth
+
+`store/authSlice.ts`
+- async thunk `fetchMe`
+- reducers `clearUser`, `setUser`
+
+`store/contractSlice.ts`
+- reducers `setContracts`, `setActiveContract`, `updateProgress`
+
+`hooks/useAuth.ts`
+- exposes `user`, `hasRole`, and `canModify`
+
+`hooks/useContractWS.ts`
+- opens a WebSocket and dispatches live progress events
+
+`components/ProtectedRoute.tsx`
+- fetches `/auth/me` if auth has not been checked
+- redirects unauthenticated users to `/login`
+
+9.4 API client layer
+
+`api/client.ts`
+- Axios instance with cookies enabled
+- automatic refresh on 401
+
+`api/auth.ts`
+- login, logout, me
+
+`api/contracts.ts`
+- upload
+- getContract
+- getStatus
+- getClauses
+- complete
+- deleteData
+- delete
+- list
+- getFileBlobUrl
+
+`api/clauses.ts`
+- approve
+- reject
+- modify
+- addClause
+- getRecommendation
+- delete
+
+`api/admin.ts`
+- listRules
+- createRule
+- updateRule
+- deleteRule
+- uploadPdf
+- clearPlaybookData
+
+`api/users.ts`
+- list
+- create
+- update
+
+9.5 Pages
+
+`HomePage.tsx`
+- marketing landing page
+
+`LoginPage.tsx`
+- email/password form, then calls login plus `fetchMe`
+
+`DashboardPage.tsx`
+- contract listing page
+
+`UploadPage.tsx`
+- upload form and progress panel
+
+`ReviewPage.tsx`
+- main review workspace
+- polls contract and clause data
+- loads file preview
+- shows explainability drawer, export menu, and completion workflow
+
+`AdminPage.tsx`
+- admin control panel for playbook rules and users
+- supports direct rule CRUD, PDF upload extraction, and playbook clearing
+
+9.6 Components
+
+Layout:
+- `Sidebar.tsx`
+- `TopBar.tsx`
+
+Dashboard:
+- `ContractTable.tsx`
+- `RiskSummaryChart.tsx`
+
+Upload:
+- `DropZone.tsx`
+- `UploadProgress.tsx`
+
+Review:
+- `ContractViewer.tsx`
+- `ClauseCard.tsx`
+- `RiskBadge.tsx`
+- `ExplainabilityDrawer.tsx`
+
+Export:
+- `ExportMenu.tsx`
+
+UI behavior:
+- The review screen is split-pane: PDF preview on the left, clause cards on the right
+- Clause cards surface intent, gap, policy violation, precedent, and AI recommendation
+- Senior lawyers and admins can approve, reject, request changes, or delete clauses
+
+10. Deployment and Environment
+
+`pyproject.toml`
+- Python 3.12 target
+- FastAPI, Celery, Mongo, SQLAlchemy, Qdrant, Neo4j, Azure, OpenAI, LangGraph, testing tools
+
+Docker:
+- `docker/Dockerfile.api`: API container
+- `docker/Dockerfile.worker`: worker container
+- `docker/docker-compose.yml`: PostgreSQL, Qdrant, Neo4j services
+
+Important environment categories:
+- datastore URLs
+- Azure storage and OCR credentials
+- OpenAI API key and model names
+- JWT and encryption keys
+- Redis and Celery URLs
+
+11. Test Coverage Overview
+
+The test tree includes:
+- `tests/unit`
+- `tests/integration`
+- `tests/e2e`
+
+Unit tests cover:
+- JWT token creation and verification
+- file validation
+- duplicate detection
+- clause validator behavior
+- party extraction
+- some Neo4j repository behavior
+
+Integration tests currently include:
+- LangGraph shape and selected node behavior
+- Mongo repository behavior
+- several empty placeholder files for API routes, OCR pipeline, Celery tasks, and upload flow
+
+E2E:
+- one skipped full-pipeline test intended for manual live-environment execution
+
+12. Key End-to-End Flows
+
+12.1 Contract upload and processing
+- user uploads file
+- backend validates bytes, stores metadata, stores blob, and dispatches Celery
+- OCR extracts text
+- parties are heuristically extracted and linked in Neo4j
+- clauses are extracted by LLM and stored
+- clause vectors are embedded and indexed
+- clauses are checked against playbook vectors
+- risky clauses are sent to LangGraph review
+- lawyer reviews results
+
+12.2 Playbook ingestion
+- admin uploads a PDF
+- OCR returns markdown
+- markdown is split by headings
+- each chunk is sent to OpenAI for rule extraction
+- valid rules are inserted into PostgreSQL
+- each rule description is embedded into the playbook Qdrant collection
+
+12.3 Clause decisioning
+- lawyer approves, rejects, or requests changes
+- Mongo clause state is updated
+- Neo4j review relationship is written asynchronously in a background task
+
+13. Important Implementation Risks and Drift
+
+13.1 Test/code drift already present
+
+`pytest` collection currently fails because:
+- `tests/unit/test_neo4j_contract_graph.py` imports `graph_check_node`, which does not exist
+- `tests/unit/test_risk_calculator.py` imports `contracts_platform.orchestration.scoring.risk_calculator`, which does not exist
+
+This means the repository still contains tests for an older orchestration design that has been removed or renamed.
+
+13.2 Empty modules and placeholders
+
+Empty files were found in places that suggest unfinished or abandoned pieces:
+- `contracts_platform/api/middleware/tracing_middleware.py`
+- `contracts_platform/api/schemas/risk.py`
+- several `__init__.py` files
+- several integration test files are empty
+- `scripts/generate_api_key.py` is empty
+- `contracts_platform/db/neo4j/models.py` is empty
+
+13.3 Status model is only partially consistent
+
+Defined statuses include `OCR_COMPLETE` and `EXTRACTION_COMPLETE`, but worker tasks mostly set generic `PROCESSING` plus a `current_stage`. The finer-grained statuses exist in enums and frontend types but are not consistently emitted by workers.
+
+13.4 Qdrant playbook semantics are inconsistent
+
+Playbook rule vectors are inserted with payload fields like `rule_type`, `description`, and `source`, but `qdrant_check_task` searches the playbook store with `status="accepted"`, which playbook rules do not obviously carry as a semantic concept. Auto-approval logic may therefore depend on assumptions that are not clearly enforced by the playbook ingestion path.
+
+13.5 Rule matching in PostgreSQL is simplistic
+
+`playbook_score_node` checks:
+- FORBIDDEN rules by substring inclusion
+- REQUIRED rules by substring absence
+
+This is easy to implement but weak for legal text. It can create false positives and false negatives because it does not reason semantically, only textually.
+
+13.6 Frontend/backend user shape mismatch
+
+The frontend `User` type expects `full_name`, and both `Sidebar` and `TopBar` render it, but backend user creation and auth responses only guarantee `email`, `role`, `tenant_id`, and IDs. Unless Mongo already stores `full_name`, the UI can render `undefined`.
+
+13.7 Vite proxy and Axios base URL mismatch
+
+The Vite config proxies `/api` and `/ws`, but the frontend Axios client uses `VITE_API_URL` directly and calls paths like `/auth/login` and `/contracts/*`. This works only if the env var is configured correctly; the proxy is not the main path used by the client.
+
+13.8 Review completion logic is duplicated
+
+Contract readiness is set in both:
+- `run_review_graph`
+- `review_orchestration_task`
+
+The conditions are slightly different. That can cause status race conditions or confusing state transitions.
+
+13.9 Redis temp collection key is read but not clearly written
+
+`clause_extraction_task` reads `temp_collection:{contract_id}` from Redis and tries to clean it up, but the reviewed OCR path does not create or register that key. This suggests an unfinished RAG/temp-index pipeline.
+
+13.10 Celery and event-loop design is pragmatic but brittle
+
+The workers use sync Celery tasks with `asyncio.run()` wrappers. That works, but it increases complexity around DB clients and event-loop lifetimes, especially for SQLAlchemy and Motor.
+
+14. Verification Notes
+
+Commands run during review:
+- file inventory using `rg --files`
+- direct source reads across backend, frontend, workers, and tests
+- `.venv\Scripts\python.exe -m pytest -q`
+
+Verification result:
+- test collection failed before execution because of missing modules referenced by stale tests
+- git status could not be read due to repository safe-directory ownership restrictions
+
+15. Bottom Line
+
+This project is a serious multi-service legal-tech platform, not a toy CRUD app. The strongest parts are:
+- clear separation between API, workers, orchestration, and datastores
+- thoughtful use of Mongo/PostgreSQL/Qdrant/Neo4j for distinct roles
+- a usable lawyer-facing review UI
+- strong administrative tooling for playbook management
+
+The main weaknesses are:
+- architecture drift between tests and implementation
+- several partially completed modules and placeholder files
+- simplistic rule matching logic
+- a few state and schema mismatches between backend and frontend
+
+If you want, the next useful step would be:
+1. a function-by-function deep dive for only the backend
+2. a function-by-function deep dive for only the frontend
+3. a cleanup plan that turns this report into a concrete refactor roadmap

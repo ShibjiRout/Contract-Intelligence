@@ -25,9 +25,9 @@ class ClauseResponse(BaseModel):
 
 
 class ClauseModifyRequest(BaseModel):
-    lawyer_recommendation: str = Field(min_length=10)
+    lawyer_recommendation: str = Field(default="", min_length=0)
     lawyer_mail_id: EmailStr
-    accept_ai_recommendation: bool = False         # True = lawyer accepts AI suggestion as-is
+    accept_ai_recommendation: bool = False
 
 
 class ClauseAddRequest(BaseModel):

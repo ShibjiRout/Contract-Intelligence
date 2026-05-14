@@ -15,4 +15,8 @@ export const contractsApi = {
   deleteData: (id: string) => client.delete<{ contract_id: string; deleted: boolean }>(`/contracts/${id}/data`),
   delete: (id: string) => client.delete<{ contract_id: string; deleted: boolean }>(`/contracts/${id}`),
   list: () => client.get<Contract[]>('/contracts'),
+  getFileBlobUrl: async (id: string): Promise<string> => {
+    const response = await client.get<Blob>(`/contracts/${id}/file`, { responseType: 'blob' })
+    return URL.createObjectURL(response.data)
+  },
 }

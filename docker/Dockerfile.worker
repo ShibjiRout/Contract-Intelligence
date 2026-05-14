@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -25,4 +26,4 @@ USER appuser
 
 CMD ["celery", "-A", "contracts_platform.workers.celery_app", "worker", \
      "--loglevel=info", \
-     "-Q", "ingest,ocr,extraction,orchestration,recommendation,post_decision,cleanup,dlq"]
+     "-Q", "ingest,ocr,extraction,qdrant_check,orchestration,dlq"]

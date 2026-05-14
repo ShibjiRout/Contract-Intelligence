@@ -1,0 +1,17 @@
+No hosted production demo URL was found in this codebase.
+
+Configured local application URLs found in repository settings:
+
+Frontend:
+http://localhost:5173
+
+Backend API:
+http://localhost:8000
+
+WebSocket progress endpoint pattern:
+ws://localhost:8000/ws/contracts/{contract_id}
+
+Health check:
+http://localhost:8000/health
+
+If you deploy the app later, replace this file with the public demo URL.

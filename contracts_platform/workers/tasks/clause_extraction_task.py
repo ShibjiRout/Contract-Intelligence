@@ -34,6 +34,8 @@ def clause_extraction_task(self, contract_id: str) -> None:
 
             r = redis.from_url(settings.REDIS_URL, decode_responses=True)
             text = r.get(f"ocr_text:{contract_id}") or ""
+            auto_accept_flag = r.get(f"auto_accept_all:{contract_id}")
+            auto_accept_all = bool(auto_accept_flag)
 
             from contracts_platform.pipeline.clause_extraction.extractor import extract_clauses
 
@@ -49,6 +51,9 @@ def clause_extraction_task(self, contract_id: str) -> None:
             for clause in (clauses or []):
                 clause["contract_id"] = contract_id
                 clause["tenant_id"] = tenant_id
+                if auto_accept_all:
+                    clause["status"] = "approved"
+                    clause["risk_category"] = "GREEN"
 
             if clauses:
                 await db["clauses"].insert_many(clauses)
@@ -66,8 +71,8 @@ def clause_extraction_task(self, contract_id: str) -> None:
                             payload={
                                 "clause_type": clause.get("clause_type", ""),
                                 "contract_id": contract_id,
-                                "status": "pending",
-                                "risk_level": "UNKNOWN",
+                                "status": clause.get("status") or "pending",
+                                "risk_level": clause.get("risk_category") or "UNKNOWN",
                                 "created_at": str(clause.get("created_at", "")),
                             },
                         )
@@ -76,7 +81,7 @@ def clause_extraction_task(self, contract_id: str) -> None:
                             contract_id=contract_id,
                             tenant_id=tenant_id,
                             clause_type=clause.get("clause_type", ""),
-                            risk_level=clause.get("risk_level") or "PENDING",
+                            risk_level=clause.get("risk_category") or "PENDING",
                             risk_score=float(clause.get("risk_score") or 0.0),
                             status=clause.get("status") or "pending",
                         )
@@ -96,6 +101,27 @@ def clause_extraction_task(self, contract_id: str) -> None:
                 except Exception as exc:
                     logger.warning("clause_extraction_task.temp_cleanup_failed",
                                    contract_id=contract_id, error=str(exc))
+
+            if auto_accept_all:
+                from contracts_platform.core.constants import RiskLevel
+
+                await contract_repo.update_final_risk(db, contract_id, RiskLevel.GREEN)
+                await contract_repo.update_status(
+                    db, contract_id, ContractStatus.COMPLETED, stage="auto_accept"
+                )
+                publish(
+                    contract_id,
+                    "auto_accept",
+                    100,
+                    "Playbook similarity >= 90%; all extracted clauses auto-approved",
+                )
+                r.delete(f"auto_accept_all:{contract_id}")
+                logger.info(
+                    "clause_extraction_task.auto_accepted",
+                    contract_id=contract_id,
+                    clauses=len(clauses or []),
+                )
+                return
 
             publish(contract_id, "clause_extraction", 75, "clauses extracted")
 

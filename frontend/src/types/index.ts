@@ -1,6 +1,6 @@
 export type RiskCategory = 'GREEN' | 'AMBER' | 'RED'
-export type ClauseStatus = 'approved' | 'rejected' | 'need_changes' | 'pending'
-export type ContractStatus = 'UPLOADED' | 'PROCESSING' | 'OCR_COMPLETE' | 'EXTRACTION_COMPLETE' | 'REVIEW_READY' | 'COMPLETED' | 'ERROR'
+export type ClauseStatus = 'approved' | 'rejected' | 'need_changes' | 'pending' | 'ai_flagged'
+export type ContractStatus = 'UPLOADED' | 'PROCESSING' | 'OCR_COMPLETE' | 'EXTRACTION_COMPLETE' | 'REVIEW_READY' | 'COMPLETED' | 'APPROVED' | 'REJECTED' | 'ERROR'
 export type UserRole = 'junior_lawyer' | 'senior_lawyer' | 'admin'
 
 export interface User {

@@ -61,12 +61,12 @@ export default function ExportMenu({ contractFileName, clauses }: Props) {
         }),
       )
 
-      if (clause.recommendation) {
+      if (clause.ai_recommendation) {
         children.push(
           new Paragraph({
             children: [
               new TextRun({ text: 'Recommendation: ', bold: true }),
-              new TextRun({ text: clause.recommendation }),
+              new TextRun({ text: clause.ai_recommendation }),
             ],
           })
         )

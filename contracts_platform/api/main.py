@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, WebSocket
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pymongo.errors import PyMongoError
 
 from contracts_platform.api.middleware.logging_middleware import LoggingMiddleware
 from contracts_platform.api.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -133,6 +134,20 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             "title": title,
             "status": exc.status_code,
             "detail": exc.detail,
+        },
+    )
+
+
+@app.exception_handler(PyMongoError)
+async def pymongo_exception_handler(request: Request, exc: PyMongoError) -> JSONResponse:
+    logger.error("database_request_failed", exc_info=exc, path=request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "type": "https://errors.contracts-platform.io/database-unavailable",
+            "title": "Service Unavailable",
+            "status": 503,
+            "detail": "Database temporarily unavailable.",
         },
     )
 
