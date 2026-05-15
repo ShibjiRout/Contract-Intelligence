@@ -153,8 +153,3 @@ docker compose -f docker/docker-compose.yml up -d
 - System design: [System_Design.md](./System_Design.md)
 - Demo link file: [Demo_Link.txt](./Demo_Link.txt)
 - Full architecture audit: [CODEBASE_ARCHITECTURE_REPORT.txt](./CODEBASE_ARCHITECTURE_REPORT.txt)
-
-## Notes
-
-- The root README was empty before this update.
-- I did not find a production-hosted demo URL in the codebase, so `Demo_Link.txt` points to the local URLs actually configured in the repository.
